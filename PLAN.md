@@ -185,14 +185,15 @@ Bump `version` on any breaking change; old peers must refuse cleanly with a "ple
 
 ## 9. Roadmap
 
-| Phase | Scope | Rough size |
+| Phase | Scope | Status |
 | --- | --- | --- |
-| **0. Spike** | Tauri 2 + Vue scaffold, Rust workspace, throwaway Mac→Mac mouse forward over plain TCP. Goal: prove the input loop end-to-end. | ~1 wk |
-| **1. Input core** | Win + Mac capture/injection behind `trait InputBackend`. Permissions UX. Mouse + keyboard from day one. | 3–4 wk |
-| **2. Transport + pairing** | QUIC, mDNS discovery, SPAKE2 pairing flow, persistent ed25519 identity, paired-peers store. | 2–3 wk |
-| **3. Layout GUI** | Vue shell, drag-arrange monitor canvas, per-edge handoff config, DPI-aware mapping, tray icon, autostart. | 2–3 wk |
-| **4. Polish & v1 release** | Reconnection, lock-to-host hotkey, basic logs/diagnostics, installer per OS. | 2 wk |
-| **5. v2** | Clipboard text sync, Linux X11, then Wayland. | later |
+| **0. Spike** | Tauri 2 + Vue scaffold, Rust workspace, throwaway Mac→Mac mouse forward over plain TCP. Goal: prove the input loop end-to-end. | ✅ done |
+| **1. Input core** | Win + Mac capture/injection behind `trait InputBackend`. Permissions UX. Mouse + keyboard from day one. | ✅ done |
+| **2. Transport + pairing** | QUIC, mDNS discovery, SPAKE2 pairing flow, persistent ed25519 identity, paired-peers store. | ✅ done |
+| **3. Layout GUI** | Vue shell, drag-arrange monitor canvas, tray icon, autostart. Per-edge handoff math is the deferred 3.5 piece. | ✅ done (canvas + chrome) |
+| **4. Polish & v1 release** | Reconnection, lock-to-host hotkey, basic logs/diagnostics, installer per OS. | ✅ done (reconnect + lock); installer config still skipped (`bundle.active=false`) |
+| **5. v2** | Clipboard text sync (✅ done), Linux X11 (stub), then Wayland (deferred). | partial |
+| **3.5 / future** | Per-edge handoff math: sender's cursor crossing a mapped edge → mm-coords on receiver; ALPN-multiplexed pair+data on a single endpoint; full cross-OS HID keycode translation; EDID-hash monitor IDs. | not started |
 
 ## 10. Decisions log
 
@@ -211,6 +212,12 @@ Bump `version` on any breaking change; old peers must refuse cleanly with a "ple
 | 2026-04-26 | Built-in latency probe in Phase 0 | Can't optimize what we can't measure; needed for bug reports too. |
 | 2026-04-26 | Send physical scancodes, not characters | Matches Synergy/Universal Control; avoids layout-translation bugs across hosts. |
 | 2026-04-26 | USB cables not a v1 feature | Thunderbolt / USB4 networking gives us the wired-low-latency case for free as a NIC. |
+| 2026-04-26 | Phase 0 spike landed (commit 1e71fe4) | macOS-only mouse over plain TCP, Tauri+Vue scaffold, latency probe, kill switch. |
+| 2026-04-26 | Phase 1 landed (commit f8a3acc) | Windows backend behind `trait InputBackend`, macOS keyboard support, monitor enumeration, accessibility preflight, GitHub Actions CI for mac + windows. |
+| 2026-04-26 | Phase 2 landed (commit 1a70250) | TCP→QUIC swap (datagrams for pointer deltas, streams for state), mDNS discovery, SPAKE2 + ed25519 pairing flow, Vue pairing UI. Pair endpoint and data link still use separate certs (Phase 3.5 unifies via ALPN). |
+| 2026-04-26 | Phase 3 landed (commit b2d056c) | Hand-rolled SVG monitor-arrangement canvas with snap-to-edge, system tray icon, autostart Tauri commands. Edge-handoff math (cursor mm-mapping → remote injection) deferred to Phase 3.5 — canvas exposes the geometry but cursor crossing still uses Phase 0's absolute pixel forwarding. |
+| 2026-04-26 | Phase 4 landed (commit 6b98ccb) | Sender reconnects with exponential backoff (broadcast bridge keeps capture across reconnects); receiver loops on serve(); lock-to-host static + Tauri commands so the GUI can pin input locally without dropping the link. |
+| 2026-04-27 | Phase 5 landed | Plain-text clipboard sync (arboard, 500 ms poll, watermark-based echo suppression). Linux X11 backend stays a stub — real `xtest` + `XInput2` impl is the next concrete piece of work. |
 
 ## 11. Open questions
 

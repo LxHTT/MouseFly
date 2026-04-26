@@ -259,7 +259,8 @@ impl InputBackend for WinBackend {
             Frame::Heartbeat
             | Frame::RttProbe { .. }
             | Frame::RttReply { .. }
-            | Frame::LayoutUpdate { .. } => {}
+            | Frame::LayoutUpdate { .. }
+            | Frame::Clipboard { .. } => {}
         }
         Ok(())
     }

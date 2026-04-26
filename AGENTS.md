@@ -40,16 +40,26 @@ CLAUDE.md
 
 ## Common commands
 
-To be finalized when scaffolded. Expected:
-
 ```bash
-pnpm install
-pnpm tauri dev                  # run app in dev
-pnpm tauri build                # production build
-pnpm lint                       # eslint + prettier
-pnpm typecheck                  # vue-tsc --noEmit
+pnpm install                            # one-time JS deps
+pnpm test                               # bash scripts/test.sh — fmt + clippy + tests + builds + smoke
+pnpm start                              # bash scripts/start.sh — full loopback dev (receiver + sender, two windows)
+
+# Single role (manual):
+pnpm receiver                           # tauri dev --listen 0.0.0.0:7878
+pnpm receiver:inject                    # same, with injection ON (real second machine only)
+pnpm sender                             # tauri dev --peer 127.0.0.1:7878
+
+# Tauri custom args:
+pnpm dev -- -- --listen 0.0.0.0:7878
+pnpm dev -- -- --peer 192.168.x.y:7878
+
+# Lower-level checks:
+pnpm --filter mousefly-ui typecheck     # vue-tsc --noEmit
+pnpm --filter mousefly-ui build         # vite build
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p mousefly-input --target x86_64-pc-windows-msvc -- -D warnings   # cross-check Windows backend
 cargo fmt --all
 ```
 

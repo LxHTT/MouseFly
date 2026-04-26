@@ -79,4 +79,8 @@ pub enum Frame {
     /// Sender publishes its monitor set so the receiver can render the layout
     /// and reason about edge mappings. Sent on connect and on hot-plug.
     LayoutUpdate { monitors: Vec<Monitor> },
+    /// Plain-text clipboard contents. Goes on the control stream (reliable,
+    /// in-order). Loopback safety is the sender's job — see
+    /// `mousefly-app/src/clipboard.rs`.
+    Clipboard { text: String },
 }

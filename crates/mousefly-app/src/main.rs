@@ -9,6 +9,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clipboard;
 mod pairing;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -416,6 +417,8 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
 
+    let clipboard_mark = clipboard::make_watermark();
+
     // Capture is started exactly once and feeds a tokio broadcast channel so
     // we can transparently re-attach to a fresh Link on each reconnect attempt.
     emit_status(
@@ -455,6 +458,7 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
                     .await;
 
                 spawn_health_emitter(app.clone(), link.health.clone(), "sender");
+                clipboard::spawn_poller(link.outbound.clone(), clipboard_mark.clone());
 
                 let outbound = link.outbound.clone();
                 let mut cap_rx = cap_tx.subscribe();
@@ -485,6 +489,9 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
                 while let Some(inbound) = link.inbound.recv().await {
                     match inbound.frame {
                         Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        Frame::Clipboard { text } => {
+                            clipboard::apply(text, &clipboard_mark).await;
+                        }
                         other => debug!(?other, "sender saw inbound frame (ignored)"),
                     }
                 }
@@ -508,6 +515,8 @@ async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
 
+    let clipboard_mark = clipboard::make_watermark();
+
     loop {
         info!("waiting for sender on {addr}");
         emit_status(&app, "info", format!("Listening on {addr} for sender…"));
@@ -529,10 +538,14 @@ async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
                     })
                     .await;
                 spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
+                clipboard::spawn_poller(link.outbound.clone(), clipboard_mark.clone());
 
                 while let Some(inbound) = link.inbound.recv().await {
                     match inbound.frame {
                         Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        Frame::Clipboard { text } => {
+                            clipboard::apply(text, &clipboard_mark).await;
+                        }
                         ref f if inject => {
                             if let Err(e) = backend.inject(f) {
                                 warn!("inject failed: {e:#}");

@@ -163,7 +163,8 @@ impl InputBackend for MacBackend {
             Frame::Heartbeat
             | Frame::RttProbe { .. }
             | Frame::RttReply { .. }
-            | Frame::LayoutUpdate { .. } => {}
+            | Frame::LayoutUpdate { .. }
+            | Frame::Clipboard { .. } => {}
         }
         Ok(())
     }
