@@ -5,6 +5,7 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
 import { useLayoutStore, type CanvasMonitor } from './stores/layout'
 import {
+  currentRole,
   listenLayout,
   listenLinkHealth,
   listenLinkStatus,
@@ -61,21 +62,31 @@ watch(tab, (t) => {
   applyTabSize(t)
 })
 
+function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: boolean }) {
+  link.role = r.kind as typeof link.role
+  if (r.kind === 'sender') {
+    link.peer = r.peer ?? ''
+    link.inject = false
+  } else if (r.kind === 'receiver') {
+    link.peer = r.listen ?? ''
+    link.inject = r.inject ?? false
+  } else {
+    link.peer = ''
+    link.inject = false
+  }
+}
+
 onMounted(async () => {
   applyTabSize(tab.value)
-  unlistenRole = await listenRole((r) => {
-    link.role = r.kind
-    if (r.kind === 'sender') {
-      link.peer = r.peer
-      link.inject = false
-    } else if (r.kind === 'receiver') {
-      link.peer = r.listen
-      link.inject = r.inject
-    } else {
-      link.peer = ''
-      link.inject = false
-    }
-  })
+  // Fetch the authoritative role first — Rust may have emitted "role" before
+  // the webview's listener was registered.
+  try {
+    const r = await currentRole()
+    applyRole(r)
+  } catch {
+    /* idle default is fine */
+  }
+  unlistenRole = await listenRole((r) => applyRole(r))
   unlistenHealth = await listenLinkHealth((h) => {
     link.p50us = h.p50_us
     link.p99us = h.p99_us

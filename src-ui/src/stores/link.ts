@@ -5,7 +5,7 @@ import type { StatusSeverity } from '../ipc'
 export type Role = 'idle' | 'sender' | 'receiver' | 'connecting'
 
 export const useLinkStore = defineStore('link', () => {
-  const role = ref<Role>('connecting')
+  const role = ref<Role>('idle')
   const peer = ref<string>('')
   const inject = ref<boolean>(false)
   const p50us = ref<number>(0)
@@ -13,7 +13,7 @@ export const useLinkStore = defineStore('link', () => {
   const eps = ref<number>(0)
   const offsetNs = ref<number>(0)
   const statusSeverity = ref<StatusSeverity>('info')
-  const statusText = ref<string>('Starting…')
+  const statusText = ref<string>('Ready. Choose a role below.')
 
   return {
     role,

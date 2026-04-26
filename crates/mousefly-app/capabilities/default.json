@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the main MouseFly window. Grants the core APIs the webview uses (events, windowing) plus the autostart plugin's default permission set. Custom commands defined in the app crate (start_link, set_lock_to_host, etc.) are auto-allowed and don't need to be listed.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:webview:default",
+    "autostart:default"
+  ]
+}
