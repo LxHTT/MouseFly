@@ -5,7 +5,11 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev --config crates/mousefly-app/tauri.conf.json",
-    "build": "tauri build --config crates/mousefly-app/tauri.conf.json"
+    "build": "tauri build --config crates/mousefly-app/tauri.conf.json",
+    "start": "bash scripts/start.sh",
+    "receiver": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --listen 0.0.0.0:7878",
+    "receiver:inject": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --listen 0.0.0.0:7878 --inject",
+    "sender": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --peer 127.0.0.1:7878"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

@@ -4,17 +4,19 @@
   "version": "0.1.0",
   "identifier": "io.mousefly.app",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../../src-ui dev",
+    "beforeDevCommand": "pnpm --filter mousefly-ui dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --dir ../../src-ui build",
+    "beforeBuildCommand": "pnpm --filter mousefly-ui build",
     "frontendDist": "../../src-ui/dist"
   },
   "app": {
     "windows": [
       {
         "title": "MouseFly",
-        "width": 480,
-        "height": 320,
+        "width": 520,
+        "height": 560,
+        "minWidth": 420,
+        "minHeight": 480,
         "resizable": true,
         "fullscreen": false
       }
