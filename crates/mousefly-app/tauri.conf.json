@@ -26,13 +26,25 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": ["dmg", "app", "nsis"],
+    "category": "Utility",
+    "shortDescription": "Keyboard and mouse forwarding across LAN hosts",
+    "longDescription": "MouseFly lets one keyboard and mouse drive multiple computers across a LAN — like macOS Universal Control, but Windows ↔ macOS.",
+    "copyright": "Copyright (c) 2026 MouseFly contributors",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }
