@@ -20,7 +20,10 @@ use mousefly_discovery::{AdvertiseConfig, Advertiser, Browser, DiscoveredPeer};
 use mousefly_input::{install_kill_switch, permissions_granted, InputBackend, Platform};
 use mousefly_net::{connect, serve, Endpoint, LinkHealth};
 use serde::Serialize;
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
@@ -147,17 +150,27 @@ fn main() -> Result<()> {
     let role_for_setup = role.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             pairing::start_pair_responder,
             pairing::start_pair_initiator,
             pairing::list_paired_peers,
             pairing::cancel_pairing,
+            get_autostart,
+            set_autostart,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let role = role_for_setup.clone();
             if let Err(e) = app_handle.emit("role", &role) {
                 warn!("emit role failed: {e}");
+            }
+
+            if let Err(e) = install_tray(app) {
+                warn!("tray icon install failed: {e:#}");
             }
             if !perms_ok {
                 emit_status(
@@ -220,6 +233,69 @@ fn main() -> Result<()> {
         })
         .run(tauri::generate_context!())
         .map_err(|e| anyhow!("tauri: {e}"))
+}
+
+#[tauri::command]
+async fn get_autostart(app: AppHandle) -> std::result::Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn set_autostart(app: AppHandle, enable: bool) -> std::result::Result<(), String> {
+    let mgr = app.autolaunch();
+    if enable {
+        mgr.enable().map_err(|e| format!("{e:#}"))
+    } else {
+        mgr.disable().map_err(|e| format!("{e:#}"))
+    }
+}
+
+/// Tray icon with Show / Hide / Quit menu. Click to focus the main window.
+fn install_tray(app: &tauri::App) -> Result<()> {
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| anyhow!("no default window icon"))?;
+    let menu = MenuBuilder::new(app)
+        .item(&MenuItemBuilder::new("Show").id("tray-show").build(app)?)
+        .item(&MenuItemBuilder::new("Hide").id("tray-hide").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::new("Quit").id("tray-quit").build(app)?)
+        .build()?;
+    TrayIconBuilder::with_id("mousefly-tray")
+        .icon(icon)
+        .tooltip("MouseFly")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "tray-show" => focus_main_window(app),
+            "tray-hide" => hide_main_window(app),
+            "tray-quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                focus_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        w.show().ok();
+        w.unminimize().ok();
+        w.set_focus().ok();
+    }
+}
+
+fn hide_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        w.hide().ok();
+    }
 }
 
 /// Brings up mDNS advertising + browsing and the pair-acceptor task. Runs

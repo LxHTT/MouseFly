@@ -83,3 +83,28 @@ export async function startPairInitiator(
 export async function cancelPairing(): Promise<void> {
   await invoke('cancel_pairing')
 }
+
+// --- Layout IPC ------------------------------------------------------------
+
+export interface WireMonitorId {
+  0: number
+}
+
+export interface WireMonitor {
+  id: WireMonitorId
+  name: string
+  logical_size_px: [number, number]
+  scale_factor: number
+  physical_size_mm: [number, number] | null
+  position_in_local_vd: [number, number]
+  primary: boolean
+}
+
+export interface LayoutEvent {
+  side: 'local' | 'remote'
+  monitors: WireMonitor[]
+}
+
+export function listenLayout(cb: (e: LayoutEvent) => void): Promise<UnlistenFn> {
+  return listen<LayoutEvent>('layout', (e) => cb(e.payload))
+}
