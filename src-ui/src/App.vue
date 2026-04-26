@@ -13,6 +13,8 @@ import {
   monitorIdToString,
   type WireMonitor,
 } from './ipc'
+import { LOCALES, setLocale, type Locale } from './i18n'
+import { useI18n } from 'vue-i18n'
 import SessionView from './views/SessionView.vue'
 import LayoutView from './views/LayoutView.vue'
 
@@ -20,6 +22,11 @@ type Tab = 'session' | 'layout'
 const tab = ref<Tab>('session')
 const link = useLinkStore()
 const layoutStore = useLayoutStore()
+const { t, locale } = useI18n()
+const currentLocale = computed({
+  get: () => locale.value as Locale,
+  set: (v: Locale) => setLocale(v),
+})
 let unlistenRole: UnlistenFn | null = null
 let unlistenHealth: UnlistenFn | null = null
 let unlistenStatus: UnlistenFn | null = null
@@ -199,7 +206,7 @@ const linkDot = computed(() => {
       ref="cardRef"
       class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 space-y-4"
     >
-      <header class="flex items-center justify-between">
+      <header class="flex items-center justify-between gap-3">
         <h1 class="text-xl font-semibold tracking-tight flex items-center gap-2">
           <span
             class="inline-block w-2 h-2 rounded-full transition-colors"
@@ -207,14 +214,25 @@ const linkDot = computed(() => {
           />
           MouseFly
         </h1>
-        <nav class="flex gap-1 -mb-1">
-          <button :class="tabClass('session').value" @click="tab = 'session'">
-            Session
-          </button>
-          <button :class="tabClass('layout').value" @click="tab = 'layout'">
-            Layout
-          </button>
-        </nav>
+        <div class="flex items-center gap-2 -mb-1">
+          <select
+            v-model="currentLocale"
+            class="bg-zinc-900 border border-zinc-800 rounded text-[10px] py-0.5 px-1.5 text-zinc-400 hover:text-zinc-200 focus:border-zinc-700 outline-none"
+            :title="'language'"
+          >
+            <option v-for="l in LOCALES" :key="l.code" :value="l.code">
+              {{ l.label }}
+            </option>
+          </select>
+          <nav class="flex gap-1">
+            <button :class="tabClass('session').value" @click="tab = 'session'">
+              {{ t('app.tabs.session') }}
+            </button>
+            <button :class="tabClass('layout').value" @click="tab = 'layout'">
+              {{ t('app.tabs.layout') }}
+            </button>
+          </nav>
+        </div>
       </header>
 
       <Transition

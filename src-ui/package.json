@@ -14,7 +14,8 @@
     "@tauri-apps/api": "^2",
     "@vueuse/core": "^11",
     "pinia": "^2",
-    "vue": "^3.5"
+    "vue": "^3.5",
+    "vue-i18n": "^10"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",

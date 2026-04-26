@@ -370,11 +370,15 @@ async fn set_autostart(app: AppHandle, enable: bool) -> std::result::Result<(), 
 }
 
 /// Tray icon with Show / Hide / Quit menu. Click to focus the main window.
+///
+/// On macOS the tray icon is a **template image** — black-on-transparent with
+/// `icon_as_template(true)` — so the OS auto-inverts it to white in dark menu
+/// bars. On Windows we use the same monochrome PNG; the tray notification
+/// area handles light/dark via Windows 11 personalisation natively.
 fn install_tray(app: &tauri::App) -> Result<()> {
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| anyhow!("no default window icon"))?;
+    // `include_image!` decodes the PNG at compile time, giving us a
+    // 'static Image — no I/O cost or path resolution at startup.
+    let icon = tauri::include_image!("icons/tray.png");
     let menu = MenuBuilder::new(app)
         .item(&MenuItemBuilder::new("Show").id("tray-show").build(app)?)
         .item(&MenuItemBuilder::new("Hide").id("tray-hide").build(app)?)
@@ -383,6 +387,7 @@ fn install_tray(app: &tauri::App) -> Result<()> {
         .build()?;
     TrayIconBuilder::with_id("mousefly-tray")
         .icon(icon)
+        .icon_as_template(true)
         .tooltip("MouseFly")
         .menu(&menu)
         .show_menu_on_left_click(false)

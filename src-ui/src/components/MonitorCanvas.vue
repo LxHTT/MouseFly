@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import {
   hostBounds,
@@ -10,6 +11,7 @@ import {
 } from '../stores/layout'
 
 const layout = useLayoutStore()
+const { t } = useI18n()
 
 const SNAP_DIST = 24
 const HIGHLIGHT_DIST = 8
@@ -487,7 +489,7 @@ defineExpose({ resetView })
                 font-size="14"
                 font-family="ui-monospace, SFMono-Regular, monospace"
               >
-                PRI
+                {{ t('layout.primaryBadge') }}
               </text>
             </g>
           </g>
@@ -515,7 +517,7 @@ defineExpose({ resetView })
         class="px-2 py-1 rounded border border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:bg-zinc-800"
         @click="resetView"
       >
-        Fit
+        {{ t('layout.fit') }}
       </button>
     </div>
   </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useLinkStore } from '../stores/link'
 import { usePairingStore, type DiscoveredPeer } from '../stores/pairing'
@@ -24,6 +25,7 @@ import {
 
 const link = useLinkStore()
 const pairing = usePairingStore()
+const { t } = useI18n()
 const identity = ref<LocalIdentity | null>(null)
 const now = ref(Math.floor(Date.now() / 1000))
 let tickHandle: ReturnType<typeof setInterval> | null = null
@@ -99,11 +101,11 @@ watch(useCustomCode, (v) => {
 function validateCustomCode(): boolean {
   const c = customCode.value.trim()
   if (c.length < 6) {
-    customCodeError.value = 'at least 6 characters'
+    customCodeError.value = t('session.setup.codeErrorLength')
     return false
   }
   if (!/^[A-Za-z0-9]+$/.test(c)) {
-    customCodeError.value = 'letters and digits only'
+    customCodeError.value = t('session.setup.codeErrorChars')
     return false
   }
   customCodeError.value = ''
@@ -111,6 +113,7 @@ function validateCustomCode(): boolean {
 }
 
 async function setupSession() {
+  void ttlLabel.value // keep `computed` referenced; used by template
   if (useCustomCode.value && !validateCustomCode()) return
   customCodeError.value = ''
   try {
@@ -155,6 +158,14 @@ function pickPeer(peer: DiscoveredPeer) {
   status.value = { kind: 'joining', peerLabel: peer.instance_name }
 }
 
+const ttlLabel = computed(() => {
+  if (typeof ttlChoice.value !== 'number') return t('session.setup.ttlNever')
+  const minutes = ttlChoice.value
+  return t('session.setup.ttlEvery', {
+    value: minutes >= 60 ? '1 h' : `${minutes} min`,
+  })
+})
+
 function pickManual() {
   if (!manualPeer.value.trim()) return
   hostingPeer.value = null
@@ -168,7 +179,7 @@ async function submitJoin() {
   if (hostingPeer.value) {
     const ip = pickPeerIp(hostingPeer.value.addrs)
     if (!ip) {
-      status.value = { kind: 'failed', reason: 'peer has no usable address' }
+      status.value = { kind: 'failed', reason: t('session.failed.noUsableAddress') }
       return
     }
     pairAddr = formatPeerAddr(ip, hostingPeer.value.port)
@@ -271,12 +282,12 @@ onBeforeUnmount(() => {
     >
       <div class="flex items-center justify-between">
         <div class="text-[10px] uppercase tracking-widest text-zinc-500">
-          This host
+          {{ t('identity.label') }}
         </div>
         <div class="text-xs text-zinc-300">{{ identity.instance_name }}</div>
       </div>
       <div class="flex items-center justify-between gap-2">
-        <div class="text-[10px] text-zinc-500">id</div>
+        <div class="text-[10px] text-zinc-500">{{ t('identity.id') }}</div>
         <div class="font-mono text-[11px] text-zinc-400 truncate flex-1 text-right">
           {{ identity.host_id_hex.slice(0, 24) }}…
         </div>
@@ -284,7 +295,7 @@ onBeforeUnmount(() => {
           class="text-[10px] px-1.5 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-800"
           @click="copy(identity.host_id_hex)"
         >
-          copy
+          {{ t('identity.copy') }}
         </button>
       </div>
     </div>
@@ -294,54 +305,60 @@ onBeforeUnmount(() => {
       <div class="flex items-center justify-between">
         <h2 class="text-sm uppercase tracking-widest text-emerald-400">
           {{
-            link.role === 'sender' ? 'Joined session' : 'Hosting session'
+            link.role === 'sender'
+              ? t('session.success.titleSender')
+              : t('session.success.titleReceiver')
           }}
         </h2>
         <button
           class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
           @click="stopSession"
         >
-          {{ link.role === 'sender' ? 'Leave' : 'Stop' }}
+          {{
+            link.role === 'sender'
+              ? t('session.success.leave')
+              : t('session.success.stop')
+          }}
         </button>
       </div>
       <div class="text-zinc-400 text-sm">
-        <span class="text-zinc-500">peer:</span>
+        <span class="text-zinc-500">{{ t('session.metrics.peer') }}</span>
         <span class="text-zinc-200 ml-2">{{ link.peer || '—' }}</span>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="border border-zinc-800 rounded p-3">
           <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            latency p50
+            {{ t('session.metrics.latencyP50') }}
           </div>
           <div class="text-2xl tabular-nums">
-            {{ p50ms }} <span class="text-sm text-zinc-500">ms</span>
+            {{ p50ms }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
           </div>
         </div>
         <div class="border border-zinc-800 rounded p-3">
           <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            latency p99
+            {{ t('session.metrics.latencyP99') }}
           </div>
           <div class="text-2xl tabular-nums">
-            {{ p99ms }} <span class="text-sm text-zinc-500">ms</span>
+            {{ p99ms }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
           </div>
         </div>
         <div class="border border-zinc-800 rounded p-3">
           <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            events/sec
+            {{ t('session.metrics.eventsPerSec') }}
           </div>
           <div class="text-2xl tabular-nums">{{ link.eps }}</div>
         </div>
         <div class="border border-zinc-800 rounded p-3">
           <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            clock offset
+            {{ t('session.metrics.clockOffset') }}
           </div>
           <div class="text-2xl tabular-nums">
-            {{ offsetMs }} <span class="text-sm text-zinc-500">ms</span>
+            {{ offsetMs }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
           </div>
         </div>
       </div>
       <p class="text-xs text-zinc-600 leading-relaxed">
-        Kill switch:
+        {{ t('session.metrics.killSwitch') }}
         <kbd class="px-1 bg-zinc-800 rounded text-zinc-300">Ctrl + ⌘ + ⇧ + Esc</kbd>
         (mac) /
         <kbd class="px-1 bg-zinc-800 rounded text-zinc-300">Ctrl + Win + ⇧ + Esc</kbd>
@@ -352,7 +369,7 @@ onBeforeUnmount(() => {
     <!-- Hosting (waiting for someone to join) -->
     <div v-else-if="status.kind === 'hosting'" class="space-y-3">
       <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        Session live — share this code
+        {{ t('session.hosting.title') }}
       </h2>
       <div class="border border-zinc-800 rounded overflow-hidden">
         <div
@@ -368,31 +385,31 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <p class="text-xs text-zinc-500 leading-relaxed">
-        Open MouseFly on the other host and join this session.
+        {{ t('session.hosting.hint') }}
         <span v-if="codeRemaining !== null">
-          Code refreshes in
-          <span class="text-zinc-300 font-mono">{{ codeRemainingLabel }}</span
-          >.
+          {{ t('session.hosting.refreshIn') }}
+          <span class="text-zinc-300 font-mono">{{ codeRemainingLabel }}</span>
+          .
         </span>
-        <span v-else>Code never expires until you stop the session.</span>
+        <span v-else>{{ t('session.hosting.neverExpires') }}</span>
       </p>
       <button
         class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
         @click="stopSession"
       >
-        Stop session
+        {{ t('session.hosting.stop') }}
       </button>
     </div>
 
     <!-- Joining: enter code -->
     <div v-else-if="status.kind === 'joining'" class="space-y-3">
       <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        Join <span class="text-zinc-200 normal-case">{{ status.peerLabel }}</span>
+        {{ t('session.joining.title', { peer: status.peerLabel }) }}
       </h2>
       <input
         v-model="joinCode"
         class="w-full border border-zinc-800 rounded p-3 text-2xl tabular-nums tracking-widest text-center bg-zinc-900 focus:border-blue-700 outline-none"
-        placeholder="123 456"
+        :placeholder="t('session.joining.placeholder')"
         autofocus
       />
       <div class="flex gap-2">
@@ -401,20 +418,22 @@ onBeforeUnmount(() => {
           :disabled="joinCode.replace(/\s+/g, '').length < 6"
           @click="submitJoin"
         >
-          Submit
+          {{ t('session.joining.submit') }}
         </button>
         <button
           class="px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-800"
           @click="status = { kind: 'idle' }"
         >
-          Cancel
+          {{ t('session.joining.cancel') }}
         </button>
       </div>
     </div>
 
     <!-- Failed -->
     <div v-else-if="status.kind === 'failed'" class="space-y-3">
-      <h2 class="text-sm uppercase tracking-widest text-red-400">Failed</h2>
+      <h2 class="text-sm uppercase tracking-widest text-red-400">
+        {{ t('session.failed.title') }}
+      </h2>
       <div class="border border-red-800 bg-red-900/30 rounded p-3 text-sm">
         {{ status.reason }}
       </div>
@@ -422,7 +441,7 @@ onBeforeUnmount(() => {
         class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
         @click="status = { kind: 'idle' }"
       >
-        Try again
+        {{ t('session.failed.tryAgain') }}
       </button>
     </div>
 
@@ -431,11 +450,10 @@ onBeforeUnmount(() => {
       <!-- Setup form -->
       <div class="border border-zinc-800 rounded p-4 space-y-3">
         <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-          Set up a new session
+          {{ t('session.setup.title') }}
         </h2>
         <p class="text-xs text-zinc-500 leading-relaxed">
-          Hosts the link on this device. Share the code that appears with
-          another host so it can join.
+          {{ t('session.setup.description') }}
         </p>
 
         <label class="flex items-center gap-2 text-xs text-zinc-300">
@@ -444,13 +462,13 @@ onBeforeUnmount(() => {
             type="checkbox"
             class="accent-blue-600"
           />
-          Use a custom code
+          {{ t('session.setup.customCode') }}
         </label>
         <div v-if="useCustomCode" class="space-y-1">
           <input
             v-model="customCode"
             class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
-            placeholder="≥6 letters/digits, e.g. summer42"
+            :placeholder="t('session.setup.codePlaceholder')"
             @blur="validateCustomCode"
           />
           <div v-if="customCodeError" class="text-[11px] text-red-400">
@@ -459,21 +477,21 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex items-center gap-2 text-xs">
-          <span class="text-zinc-500 uppercase tracking-widest text-[10px]"
-            >refresh</span
-          >
+          <span class="text-zinc-500 uppercase tracking-widest text-[10px]">{{
+            t('session.setup.refresh')
+          }}</span>
           <select
             v-model="ttlChoice"
             :disabled="useCustomCode"
             class="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs disabled:opacity-50"
           >
-            <option :value="5">every 5 min</option>
-            <option :value="30">every 30 min</option>
-            <option :value="60">every 1 h</option>
-            <option value="never">never</option>
+            <option :value="5">{{ t('session.setup.ttlEvery', { value: '5 min' }) }}</option>
+            <option :value="30">{{ t('session.setup.ttlEvery', { value: '30 min' }) }}</option>
+            <option :value="60">{{ t('session.setup.ttlEvery', { value: '1 h' }) }}</option>
+            <option value="never">{{ t('session.setup.ttlNever') }}</option>
           </select>
           <span v-if="useCustomCode" class="text-[11px] text-zinc-600">
-            (custom code, no refresh)
+            {{ t('session.setup.ttlNote') }}
           </span>
         </div>
 
@@ -483,12 +501,12 @@ onBeforeUnmount(() => {
           @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
         >
           <summary class="px-3 py-2 cursor-pointer text-zinc-400 hover:text-zinc-200">
-            Advanced
+            {{ t('session.setup.advanced') }}
           </summary>
           <div class="p-3 pt-0 space-y-2">
-            <label class="block text-[10px] uppercase tracking-widest text-zinc-500"
-              >Listen address</label
-            >
+            <label class="block text-[10px] uppercase tracking-widest text-zinc-500">{{
+              t('session.setup.listenAddr')
+            }}</label>
             <input
               v-model="listenAddr"
               class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
@@ -496,7 +514,7 @@ onBeforeUnmount(() => {
             />
             <label class="flex items-center gap-2 text-xs text-zinc-400">
               <input v-model="enableInject" type="checkbox" class="accent-emerald-600" />
-              Inject events into this OS
+              {{ t('session.setup.injectEvents') }}
             </label>
           </div>
         </details>
@@ -505,7 +523,7 @@ onBeforeUnmount(() => {
           class="w-full px-3 py-2 rounded bg-emerald-700/40 border border-emerald-700 hover:bg-emerald-700/60 text-emerald-200 transition-colors"
           @click="setupSession"
         >
-          Start session
+          {{ t('session.setup.start') }}
         </button>
       </div>
 
@@ -513,12 +531,12 @@ onBeforeUnmount(() => {
       <div class="border border-zinc-800 rounded p-4 space-y-3">
         <div class="flex items-center justify-between">
           <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-            Or join a session on the LAN
+            {{ t('session.discover.title') }}
           </h2>
           <span
             v-if="visiblePeers.length"
             class="text-[10px] text-zinc-500"
-            >{{ visiblePeers.length }} found</span
+            >{{ t('session.discover.foundCount', { count: visiblePeers.length }) }}</span
           >
         </div>
         <ul v-if="visiblePeers.length" class="space-y-2">
@@ -543,29 +561,29 @@ onBeforeUnmount(() => {
               class="ml-3 text-xs px-2 py-1 rounded bg-blue-700/40 border border-blue-700 hover:bg-blue-700/60 transition-colors"
               @click="pickPeer(peer)"
             >
-              Join
+              {{ t('session.discover.join') }}
             </button>
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">
-          Scanning… both sides need to be on the same LAN.
+          {{ t('session.discover.scanning') }}
         </p>
         <details class="border border-zinc-800 rounded text-xs">
           <summary class="px-3 py-2 cursor-pointer text-zinc-400 hover:text-zinc-200">
-            Join by address instead
+            {{ t('session.discover.manualToggle') }}
           </summary>
           <div class="p-3 pt-0 space-y-2">
             <input
               v-model="manualPeer"
               class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
-              placeholder="192.168.1.5:7879"
+              :placeholder="t('session.discover.manualPlaceholder')"
             />
             <button
               class="w-full text-xs px-2 py-1.5 rounded bg-blue-700/40 border border-blue-700 hover:bg-blue-700/60 disabled:opacity-50"
               :disabled="!manualPeer.trim()"
               @click="pickManual"
             >
-              Continue
+              {{ t('session.discover.continue') }}
             </button>
           </div>
         </details>
@@ -574,7 +592,7 @@ onBeforeUnmount(() => {
       <!-- Paired peers (memory of past joins) -->
       <div v-if="pairing.paired.length" class="space-y-2">
         <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-          Previously paired
+          {{ t('session.paired.title') }}
         </h2>
         <ul class="space-y-1 text-xs font-mono text-zinc-500">
           <li

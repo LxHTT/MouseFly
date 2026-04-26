@@ -186,16 +186,61 @@ def write_png(path, size):
         f.write(sig + ihdr + idat + iend)
 
 
+def write_tray_png(path, size):
+    """Monochrome (black + alpha) cursor on transparent background — macOS
+    template image. macOS auto-inverts based on the menu bar style."""
+    print(f"writing {path} ({size}x{size}, template)…")
+    raw = bytearray()
+    samples = 4
+    ref = 256.0
+    for y in range(size):
+        raw.append(0)
+        for x in range(size):
+            cov = 0.0
+            for sy in range(samples):
+                for sx in range(samples):
+                    fx = (x + (sx + 0.5) / samples) * ref / size
+                    fy = (y + (sy + 0.5) / samples) * ref / size
+                    if not in_rounded_rect(fx, fy, 256, 256, RADIUS - 8):
+                        # Tray template should be just the cursor — no bg.
+                        pass
+                    inside = point_in_polygon(fx, fy, CURSOR)
+                    edge_dist = dist_to_polygon_edge(fx, fy, CURSOR)
+                    if inside:
+                        cov += 1.0
+                    elif edge_dist < 1.0:
+                        cov += 1.0 - edge_dist
+            cov /= samples * samples
+            alpha = int(round(min(255, cov * 255)))
+            raw.append(0)  # R
+            raw.append(0)  # G
+            raw.append(0)  # B
+            raw.append(alpha)
+
+    def chunk(t, d):
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d))
+
+    sig = b'\x89PNG\r\n\x1a\n'
+    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
+    idat = chunk(b'IDAT', zlib.compress(bytes(raw), level=9))
+    iend = chunk(b'IEND', b'')
+    with open(path, 'wb') as f:
+        f.write(sig + ihdr + idat + iend)
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    sizes = {
+    app_sizes = {
         '32x32.png': 32,
         '128x128.png': 128,
         '128x128@2x.png': 256,
-        'icon.png': 1024,
+        'icon.png': 512,
     }
-    for name, size in sizes.items():
+    for name, size in app_sizes.items():
         write_png(os.path.join(here, name), size)
+    # macOS menu bar template: 32x32 logical (16pt @2x) is the conventional
+    # tray icon size. Tauri's `icon_as_template(true)` flips it per-theme.
+    write_tray_png(os.path.join(here, 'tray.png'), 32)
 
 
 if __name__ == '__main__':
