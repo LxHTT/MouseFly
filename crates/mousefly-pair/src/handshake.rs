@@ -19,6 +19,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::identity::Identity;
 
 const CONFIRM_CONTEXT: &[u8] = b"MouseFly-Pair-v1";
+const SAS_CONTEXT: &[u8] = b"MouseFly-Pair-SAS-v1";
 const SIG_CONTEXT: &[u8] = b"MouseFly-Pair-Identity-v1";
 const INITIATOR_ID: &[u8] = b"mousefly-initiator";
 const RESPONDER_ID: &[u8] = b"mousefly-responder";
@@ -44,6 +45,11 @@ pub struct PairingResult {
     pub peer_host_id_hex: String,
     pub peer_cert_fingerprint_hex: String,
     pub instance_name: String,
+    /// 32-bit Short Authentication String derived from the SPAKE2 session
+    /// key, formatted "abcd-ef01". Both sides compute it independently and
+    /// MUST display the same string. UX-level confirmation that the
+    /// cryptographic handshake completed end-to-end.
+    pub verification_sas: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -221,7 +227,14 @@ where
         peer_host_id_hex: peer_claim.host_id_hex,
         peer_cert_fingerprint_hex: peer_claim.cert_fingerprint_hex,
         instance_name: peer_claim.instance_name,
+        verification_sas: compute_sas(&k),
     })
+}
+
+fn compute_sas(k: &[u8; 32]) -> String {
+    let raw = confirmation_tag(k, SAS_CONTEXT);
+    let hex_str = hex::encode(&raw[..4]);
+    format!("{}-{}", &hex_str[..4], &hex_str[4..8])
 }
 
 pub fn now_unix() -> u64 {

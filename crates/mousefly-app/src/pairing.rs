@@ -10,6 +10,7 @@
 //! or rejects the connection.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use mousefly_net::{cert_fingerprint, pair_connect, pair_serve, Endpoint};
@@ -21,9 +22,18 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
+/// How long a generated pairing code is valid for. Apple / WhatsApp / Signal
+/// all use ~5 minutes; matching that.
+const CODE_TTL: Duration = Duration::from_secs(5 * 60);
+/// Max consecutive failed attempts before the responder forces a fresh code.
+/// SPAKE2 already requires a full handshake per attempt (which is expensive
+/// online), but this is defence-in-depth.
+const MAX_FAILED_ATTEMPTS: u32 = 5;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PairingCodePayload {
     pub code: String,
+    pub expires_unix: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +41,25 @@ pub struct PairingResultPayload {
     pub ok: bool,
     pub peer: Option<PairedPeer>,
     pub reason: Option<String>,
+    pub verification_sas: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalIdentityPayload {
+    pub host_id_hex: String,
+    pub instance_name: String,
+    pub cert_fingerprint_hex: String,
+}
+
+/// Pending pairing slot. `expires_at` is checked at the start of every
+/// incoming attempt; `failed_attempts` is bumped on PairingError and forces a
+/// fresh code once it crosses MAX_FAILED_ATTEMPTS so brute-force attempts
+/// can't stack.
+#[derive(Debug, Clone)]
+pub struct PendingCode {
+    pub raw: String,
+    pub expires_at: Instant,
+    pub failed_attempts: u32,
 }
 
 /// Shared mutable state for the pairing daemon.
@@ -39,7 +68,7 @@ pub struct PairingState {
     pub instance_name: String,
     pub data_cert_fingerprint_hex: String,
     pub paired_peers: Arc<Mutex<PairedPeerStore>>,
-    pub pending_code: Arc<Mutex<Option<String>>>,
+    pub pending_code: Arc<Mutex<Option<PendingCode>>>,
     pub pair_endpoint: Arc<Endpoint>,
 }
 
@@ -54,21 +83,58 @@ pub async fn run_pair_acceptor(state: PairingState, app: AppHandle) {
                 continue;
             }
         };
-        let code = state.pending_code.lock().await.take();
+        // Atomically grab the current code AND clear it (single-use). If the
+        // attempt fails, we re-insert below if there are retries left.
+        let code = {
+            let mut guard = state.pending_code.lock().await;
+            match guard.as_ref() {
+                Some(p) if p.expires_at > Instant::now() => guard.take(),
+                Some(_) => {
+                    *guard = None;
+                    None
+                }
+                None => None,
+            }
+        };
         match code {
-            Some(code) => {
+            Some(pending) => {
+                let pending_code = pending.raw.clone();
                 let id = state.identity.clone();
                 let store = state.paired_peers.clone();
+                let pending_slot = state.pending_code.clone();
                 let app2 = app.clone();
                 let fp = state.data_cert_fingerprint_hex.clone();
                 let name = state.instance_name.clone();
                 tokio::spawn(async move {
-                    let result = run_responder((recv, send), &code, &id, &fp, &name).await;
-                    finish_pairing(app2, store, result).await;
+                    let result =
+                        run_responder((recv, send), &pending_code, &id, &fp, &name).await;
+                    let succeeded = result.is_ok();
+                    finish_pairing(app2.clone(), store, result).await;
+                    if !succeeded {
+                        // Put the code back if there are retries left.
+                        let mut guard = pending_slot.lock().await;
+                        let next = PendingCode {
+                            failed_attempts: pending.failed_attempts + 1,
+                            ..pending.clone()
+                        };
+                        if next.failed_attempts >= MAX_FAILED_ATTEMPTS
+                            || next.expires_at <= Instant::now()
+                        {
+                            *guard = None;
+                            let _ = app2.emit(
+                                "pairing-locked",
+                                &serde_json::json!({
+                                    "reason": "too many failed attempts — generate a new code",
+                                }),
+                            );
+                        } else {
+                            *guard = Some(next);
+                        }
+                    }
                 });
             }
             None => {
-                warn!("dropped unsolicited pairing connection");
+                warn!("dropped unsolicited or expired pairing connection");
                 drop(send);
                 drop(recv);
             }
@@ -94,11 +160,12 @@ async fn finish_pairing(
             if let Err(e) = s.save() {
                 warn!("paired-peers save failed: {e:#}");
             }
-            info!(host_id = %r.peer_host_id_hex, "pairing successful");
+            info!(host_id = %r.peer_host_id_hex, sas = %r.verification_sas, "pairing successful");
             PairingResultPayload {
                 ok: true,
                 peer: Some(peer),
                 reason: None,
+                verification_sas: Some(r.verification_sas),
             }
         }
         Err(e) => {
@@ -107,6 +174,7 @@ async fn finish_pairing(
                 ok: false,
                 peer: None,
                 reason: Some(format!("{e}")),
+                verification_sas: None,
             }
         }
     };
@@ -122,9 +190,32 @@ pub async fn start_pair_responder(
 ) -> std::result::Result<String, String> {
     let code = generate_pairing_code();
     let raw = code.replace(' ', "");
-    *state.pending_code.lock().await = Some(raw.clone());
-    let _ = app.emit("pairing-code", &PairingCodePayload { code: raw.clone() });
+    let expires_at = Instant::now() + CODE_TTL;
+    let expires_unix = mousefly_pair::now_unix() + CODE_TTL.as_secs();
+    *state.pending_code.lock().await = Some(PendingCode {
+        raw: raw.clone(),
+        expires_at,
+        failed_attempts: 0,
+    });
+    let _ = app.emit(
+        "pairing-code",
+        &PairingCodePayload {
+            code: raw.clone(),
+            expires_unix,
+        },
+    );
     Ok(code)
+}
+
+#[tauri::command]
+pub async fn get_local_identity(
+    state: State<'_, PairingState>,
+) -> std::result::Result<LocalIdentityPayload, String> {
+    Ok(LocalIdentityPayload {
+        host_id_hex: state.identity.host_id_hex(),
+        instance_name: state.instance_name.clone(),
+        cert_fingerprint_hex: state.data_cert_fingerprint_hex.clone(),
+    })
 }
 
 #[tauri::command]

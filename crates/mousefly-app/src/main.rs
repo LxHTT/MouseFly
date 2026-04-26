@@ -168,6 +168,7 @@ fn main() -> Result<()> {
             pairing::start_pair_initiator,
             pairing::list_paired_peers,
             pairing::cancel_pairing,
+            pairing::get_local_identity,
             get_autostart,
             set_autostart,
             get_lock_to_host,
@@ -393,7 +394,7 @@ struct PairingStateSnapshot {
     identity: Arc<mousefly_pair::Identity>,
     instance_name: String,
     data_cert_fingerprint_hex: String,
-    pending_code: Arc<AsyncMutex<Option<String>>>,
+    pending_code: Arc<AsyncMutex<Option<pairing::PendingCode>>>,
 }
 
 async fn run_role(role: Role, app: AppHandle) -> Result<()> {

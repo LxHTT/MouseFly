@@ -19,10 +19,10 @@ export interface PairedPeer {
 
 export type PairingState =
   | { kind: 'idle' }
-  | { kind: 'awaiting'; code: string }                     // we're showing a code
-  | { kind: 'entering'; peer: DiscoveredPeer }              // we're entering a code
-  | { kind: 'in-flight'; peer: string }                     // handshake running
-  | { kind: 'success'; peer: PairedPeer }
+  | { kind: 'awaiting'; code: string; expiresUnix: number }
+  | { kind: 'entering'; peerLabel: string; peerAddr: string }
+  | { kind: 'in-flight'; peer: string }
+  | { kind: 'success'; peer: PairedPeer; verificationSas: string }
   | { kind: 'failed'; reason: string }
 
 export const usePairingStore = defineStore('pairing', () => {

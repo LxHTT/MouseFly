@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "MouseFly",
-        "width": 520,
-        "height": 560,
+        "width": 480,
+        "height": 480,
         "minWidth": 420,
-        "minHeight": 480,
+        "minHeight": 460,
         "resizable": true,
         "fullscreen": false
       }

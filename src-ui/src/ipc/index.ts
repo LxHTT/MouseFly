@@ -39,12 +39,24 @@ export function listenLinkStatus(cb: (s: LinkStatusEvent) => void): Promise<Unli
 
 export interface PairingCodeEvent {
   code: string
+  expires_unix: number
 }
 
 export interface PairingResultEvent {
   ok: boolean
   peer?: PairedPeer
   reason?: string
+  verification_sas?: string
+}
+
+export interface PairingLockedEvent {
+  reason: string
+}
+
+export interface LocalIdentity {
+  host_id_hex: string
+  instance_name: string
+  cert_fingerprint_hex: string
 }
 
 export function listenDiscoveredPeers(
@@ -67,6 +79,16 @@ export function listenPairingResult(
 
 export async function listPairedPeers(): Promise<PairedPeer[]> {
   return await invoke<PairedPeer[]>('list_paired_peers')
+}
+
+export async function getLocalIdentity(): Promise<LocalIdentity> {
+  return await invoke<LocalIdentity>('get_local_identity')
+}
+
+export function listenPairingLocked(
+  cb: (e: PairingLockedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PairingLockedEvent>('pairing-locked', (e) => cb(e.payload))
 }
 
 export async function startPairResponder(): Promise<string> {

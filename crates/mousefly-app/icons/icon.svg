@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e40af"/>
+      <stop offset="1" stop-color="#0b1d4f"/>
+    </linearGradient>
+    <linearGradient id="cur" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded background -->
+  <rect x="0" y="0" width="256" height="256" rx="56" ry="56" fill="url(#bg)"/>
+  <!-- Motion trail: three dots, decreasing opacity -->
+  <circle cx="78"  cy="184" r="6"  fill="#ffffff" opacity="0.18"/>
+  <circle cx="92"  cy="170" r="7"  fill="#ffffff" opacity="0.32"/>
+  <circle cx="108" cy="154" r="8"  fill="#ffffff" opacity="0.55"/>
+  <!-- Cursor pointer (classic arrow), pointing upper-left to suggest "from sender → flying off-edge" -->
+  <path d="
+    M 88 60
+    L 88 196
+    L 122 162
+    L 142 204
+    L 162 196
+    L 142 154
+    L 188 148
+    Z
+  " fill="url(#cur)" stroke="#0b1d4f" stroke-width="3" stroke-linejoin="round"/>
+</svg>
