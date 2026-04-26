@@ -55,11 +55,80 @@ struct Cli {
     inject: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum Role {
+    Idle,
     Sender { peer: String },
     Receiver { listen: String, inject: bool },
+}
+
+/// Holds the currently-running role task, if any. Tauri commands replace it
+/// when the user starts a new link or stops the current one.
+#[derive(Default)]
+struct LinkRuntime {
+    role: AsyncMutex<Option<Role>>,
+    handle: AsyncMutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+#[tauri::command]
+async fn start_link(
+    app: AppHandle,
+    runtime: tauri::State<'_, Arc<LinkRuntime>>,
+    role: Role,
+) -> std::result::Result<(), String> {
+    // Stop any currently-running role first.
+    {
+        let mut h = runtime.handle.lock().await;
+        if let Some(handle) = h.take() {
+            handle.abort();
+        }
+    }
+    if matches!(role, Role::Idle) {
+        *runtime.role.lock().await = Some(Role::Idle);
+        let _ = app.emit("role", &Role::Idle);
+        return Ok(());
+    }
+    *runtime.role.lock().await = Some(role.clone());
+    let _ = app.emit("role", &role);
+
+    let layout = app.state::<SharedLayout>().inner().clone();
+    let role_for_task = role.clone();
+    let app_for_task = app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout).await {
+            error!("role task exited: {e:#}");
+            emit_status(&app_for_task, "error", format!("{e:#}"));
+        }
+    });
+    *runtime.handle.lock().await = Some(handle);
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_link(
+    app: AppHandle,
+    runtime: tauri::State<'_, Arc<LinkRuntime>>,
+) -> std::result::Result<(), String> {
+    if let Some(handle) = runtime.handle.lock().await.take() {
+        handle.abort();
+    }
+    *runtime.role.lock().await = Some(Role::Idle);
+    let _ = app.emit("role", &Role::Idle);
+    emit_status(&app, "info", "Link stopped");
+    Ok(())
+}
+
+#[tauri::command]
+async fn current_role(
+    runtime: tauri::State<'_, Arc<LinkRuntime>>,
+) -> std::result::Result<Role, String> {
+    Ok(runtime
+        .role
+        .lock()
+        .await
+        .clone()
+        .unwrap_or(Role::Idle))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,16 +182,18 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let role = match (cli.listen.as_deref(), cli.peer.as_deref()) {
-        (Some(addr), None) => Role::Receiver {
+    let initial_role: Option<Role> = match (cli.listen.as_deref(), cli.peer.as_deref()) {
+        (Some(addr), None) => Some(Role::Receiver {
             listen: addr.to_string(),
             inject: cli.inject,
-        },
-        (None, Some(addr)) => Role::Sender {
+        }),
+        (None, Some(addr)) => Some(Role::Sender {
             peer: addr.to_string(),
-        },
+        }),
         (Some(_), Some(_)) => return Err(anyhow!("--listen and --peer are mutually exclusive")),
-        (None, None) => return Err(anyhow!("must specify --listen or --peer")),
+        // No CLI flags = launched from Finder / dock. Boot the GUI in idle and
+        // let the user start a link from the Link tab.
+        (None, None) => None,
     };
 
     // Phase 1 permissions preflight. macOS gates the event tap behind
@@ -153,9 +224,10 @@ fn main() -> Result<()> {
     let instance_name = pairing::host_label();
     info!(host_id = %host_id_hex, %instance_name, "identity loaded");
 
-    let role_for_setup = role.clone();
+    let role_for_setup = initial_role.clone();
 
     let global_layout = layout::make_shared();
+    let link_runtime = Arc::new(LinkRuntime::default());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -163,6 +235,7 @@ fn main() -> Result<()> {
             None,
         ))
         .manage(global_layout.clone())
+        .manage(link_runtime.clone())
         .invoke_handler(tauri::generate_handler![
             pairing::start_pair_responder,
             pairing::start_pair_initiator,
@@ -174,11 +247,16 @@ fn main() -> Result<()> {
             get_lock_to_host,
             set_lock_to_host,
             layout::update_layout,
+            start_link,
+            stop_link,
+            current_role,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            let role = role_for_setup.clone();
-            if let Err(e) = app_handle.emit("role", &role) {
+            let role_opt = role_for_setup.clone();
+            // Always broadcast a "role" event — Idle when CLI didn't pin one.
+            let initial_payload = role_opt.clone().unwrap_or(Role::Idle);
+            if let Err(e) = app_handle.emit("role", &initial_payload) {
                 warn!("emit role failed: {e}");
             }
 
@@ -236,12 +314,33 @@ fn main() -> Result<()> {
                 }
             }
 
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = run_role(role, app_handle.clone()).await {
-                    error!("role task exited: {e:#}");
-                    emit_status(&app_handle, "error", format!("{e:#}"));
-                }
-            });
+            // Only kick off run_role when CLI pinned a role; otherwise the
+            // GUI starts the link via the start_link command.
+            if let Some(role) = role_opt {
+                let app_for_task = app_handle.clone();
+                let layout = app_handle.state::<SharedLayout>().inner().clone();
+                let runtime_clone = {
+                    let runtime: tauri::State<Arc<LinkRuntime>> = app_handle.state();
+                    runtime.inner().clone()
+                };
+                let role_for_task = role.clone();
+                let handle = tauri::async_runtime::spawn(async move {
+                    if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout).await {
+                        error!("role task exited: {e:#}");
+                        emit_status(&app_for_task, "error", format!("{e:#}"));
+                    }
+                });
+                tauri::async_runtime::block_on(async {
+                    *runtime_clone.role.lock().await = Some(role);
+                    *runtime_clone.handle.lock().await = Some(handle);
+                });
+            } else {
+                emit_status(
+                    &app_handle,
+                    "info",
+                    "No link configured. Open the Link tab to start a sender or wait for a peer.",
+                );
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -397,9 +496,9 @@ struct PairingStateSnapshot {
     pending_code: Arc<AsyncMutex<Option<pairing::PendingCode>>>,
 }
 
-async fn run_role(role: Role, app: AppHandle) -> Result<()> {
-    let layout: SharedLayout = app.state::<SharedLayout>().inner().clone();
+async fn run_role(role: Role, app: AppHandle, layout: SharedLayout) -> Result<()> {
     match role {
+        Role::Idle => Ok(()),
         Role::Sender { peer } => run_sender(&peer, app, layout).await,
         Role::Receiver { listen, inject } => run_receiver(&listen, inject, app, layout).await,
     }

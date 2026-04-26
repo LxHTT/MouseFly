@@ -68,9 +68,12 @@ onMounted(async () => {
     if (r.kind === 'sender') {
       link.peer = r.peer
       link.inject = false
-    } else {
+    } else if (r.kind === 'receiver') {
       link.peer = r.listen
       link.inject = r.inject
+    } else {
+      link.peer = ''
+      link.inject = false
     }
   })
   unlistenHealth = await listenLinkHealth((h) => {

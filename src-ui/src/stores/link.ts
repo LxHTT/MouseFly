@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { StatusSeverity } from '../ipc'
 
-export type Role = 'sender' | 'receiver' | 'connecting'
+export type Role = 'idle' | 'sender' | 'receiver' | 'connecting'
 
 export const useLinkStore = defineStore('link', () => {
   const role = ref<Role>('connecting')

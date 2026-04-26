@@ -5,6 +5,7 @@ import type { DiscoveredPeer, PairedPeer } from '../stores/pairing'
 // Wire-format-matched payloads. Keep in sync with crates/mousefly-app/src/main.rs.
 
 export type RoleEvent =
+  | { kind: 'idle' }
   | { kind: 'sender'; peer: string }
   | { kind: 'receiver'; listen: string; inject: boolean }
 
@@ -89,6 +90,25 @@ export function listenPairingLocked(
   cb: (e: PairingLockedEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<PairingLockedEvent>('pairing-locked', (e) => cb(e.payload))
+}
+
+// --- Link role control -----------------------------------------------------
+
+export type StartLinkRole =
+  | { kind: 'idle' }
+  | { kind: 'sender'; peer: string }
+  | { kind: 'receiver'; listen: string; inject: boolean }
+
+export async function startLink(role: StartLinkRole): Promise<void> {
+  await invoke('start_link', { role })
+}
+
+export async function stopLink(): Promise<void> {
+  await invoke('stop_link')
+}
+
+export async function currentRole(): Promise<RoleEvent> {
+  return await invoke<RoleEvent>('current_role')
 }
 
 export async function startPairResponder(): Promise<string> {
