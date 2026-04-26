@@ -84,7 +84,7 @@ See [AGENTS.md](AGENTS.md) for the full command reference and conventions.
 
 A six-crate Cargo workspace plus a single Vue/Vite frontend, all packaged as one Tauri 2 binary per host:
 
-```
+```text
 ┌──────────────────────────  Tauri 2 process  ──────────────────────────┐
 │                                                                        │
 │   Vue 3 webview ──┐                                                    │
