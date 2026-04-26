@@ -30,7 +30,7 @@ use core_graphics::event::{
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use crossbeam_channel::{bounded, Receiver, Sender};
-use mousefly_core::{button, modifier, Frame, Modifiers, Monitor, MonitorId};
+use mousefly_core::{button, keymap, modifier, Frame, Modifiers, Monitor, MonitorId};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::sync_channel;
@@ -152,9 +152,19 @@ impl InputBackend for MacBackend {
                 down,
                 modifiers,
             } => {
+                // Wire-format `code` is a HID Usage ID. Translate to a macOS
+                // virtual keycode before injecting; if we don't have a mapping,
+                // log and drop instead of synthesising a wrong key.
+                let mac_code = match keymap::to_macos(code as u16) {
+                    Some(c) => c as u16,
+                    None => {
+                        warn!(hid = code, "unmapped HID key — dropping");
+                        return Ok(());
+                    }
+                };
                 let source = new_source()?;
-                let evt = CGEvent::new_keyboard_event(source, code as u16, down)
-                    .map_err(|()| anyhow!("CGEvent::new_keyboard_event failed (code={code})"))?;
+                let evt = CGEvent::new_keyboard_event(source, mac_code, down)
+                    .map_err(|()| anyhow!("CGEvent::new_keyboard_event failed (hid={code})"))?;
                 evt.set_flags(modifiers_to_cgflags(modifiers));
                 evt.post(CGEventTapLocation::HID);
             }
@@ -290,24 +300,26 @@ fn event_to_frame(etype: CGEventType, evt: &CGEvent) -> Option<Frame> {
             Some(Frame::Scroll { dx, dy })
         }
         CGEventType::KeyDown | CGEventType::KeyUp => {
-            let code = evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            let mac_code =
+                evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            let hid = keymap::from_macos(mac_code)?;
             let down = matches!(etype, CGEventType::KeyDown);
             Some(Frame::Key {
-                code,
+                code: hid as u32,
                 down,
                 modifiers: cgflags_to_modifiers(evt.get_flags()),
             })
         }
         CGEventType::FlagsChanged => {
             // macOS: pure-modifier transitions (Shift / Cmd) come as
-            // FlagsChanged with the keycode of the modifier itself. Map the
-            // current flag mask: if any of our tracked bits flipped on, send
-            // KeyDown; if all are off, send KeyUp. Phase 1 keeps it simple by
-            // forwarding the raw event with the current modifier state.
-            let code = evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            // FlagsChanged with the keycode of the modifier itself. Translate
+            // through HID so the receiver doesn't need to know mac VKs.
+            let mac_code =
+                evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            let hid = keymap::from_macos(mac_code)?;
             let modifiers = cgflags_to_modifiers(evt.get_flags());
             Some(Frame::Key {
-                code,
+                code: hid as u32,
                 down: modifiers != 0,
                 modifiers,
             })

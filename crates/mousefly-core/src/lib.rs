@@ -1,6 +1,8 @@
 //! Shared types for MouseFly: wire-protocol payloads, input bitmasks, and
 //! monitor descriptors. Pure data, no I/O.
 
+pub mod keymap;
+
 use serde::{Deserialize, Serialize};
 
 pub type Buttons = u32;

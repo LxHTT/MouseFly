@@ -24,7 +24,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
-use mousefly_core::{button, modifier, Frame, Monitor, MonitorId};
+use mousefly_core::{button, keymap, modifier, Frame, Monitor, MonitorId};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
@@ -242,13 +242,22 @@ impl InputBackend for WinBackend {
                 }
             }
             Frame::Key { code, down, .. } => {
+                // Wire-format `code` is HID Usage ID. Translate to a Windows
+                // VK_ before injecting; drop unmapped keys.
+                let vk = match keymap::to_windows(code as u16) {
+                    Some(v) => v as u16,
+                    None => {
+                        warn!(hid = code, "unmapped HID key — dropping");
+                        return Ok(());
+                    }
+                };
                 let flags = if down {
                     KEYBD_EVENT_FLAGS(0)
                 } else {
                     KEYEVENTF_KEYUP
                 };
                 let ki = KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(code as u16),
+                    wVk: VIRTUAL_KEY(vk),
                     wScan: 0,
                     dwFlags: flags,
                     time: 0,
@@ -446,15 +455,19 @@ unsafe extern "system" fn low_level_keyboard_proc(
         let down = matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN);
         let up = matches!(msg, WM_KEYUP | WM_SYSKEYUP);
         if down || up {
-            let frame = Frame::Key {
-                code: info.vkCode,
-                down,
-                modifiers: read_modifier_mask(),
-            };
-            if let Some(tx) = CAPTURE_TX.get() {
-                if let Err(e) = tx.try_send(frame) {
-                    if e.is_full() {
-                        warn!("capture channel full; dropping key event");
+            // Translate VK_ → HID before pushing on the wire so cross-OS
+            // receivers don't have to know the Windows keycode space.
+            if let Some(hid) = keymap::from_windows(info.vkCode) {
+                let frame = Frame::Key {
+                    code: hid as u32,
+                    down,
+                    modifiers: read_modifier_mask(),
+                };
+                if let Some(tx) = CAPTURE_TX.get() {
+                    if let Err(e) = tx.try_send(frame) {
+                        if e.is_full() {
+                            warn!("capture channel full; dropping key event");
+                        }
                     }
                 }
             }
