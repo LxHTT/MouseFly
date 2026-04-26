@@ -46,8 +46,8 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
 // over ~220ms with cubic ease-out. The layout canvas needs horizontal room;
 // link/pair pick a comfortable minimum so the inner cards don't crush.
 const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
-  session: { width: 560, minHeight: 720 },
-  layout: { width: 780, minHeight: 700 },
+  session: { width: 560, minHeight: 820 },
+  layout: { width: 780, minHeight: 720 },
 }
 const OUTER_PADDING = 40 // main.p-5 × 2 sides
 const ANIM_DURATION_MS = 220

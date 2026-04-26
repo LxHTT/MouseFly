@@ -129,6 +129,14 @@ export async function currentRole(): Promise<RoleEvent> {
   return await invoke<RoleEvent>('current_role')
 }
 
+export async function startAdvertising(): Promise<void> {
+  await invoke('start_advertising')
+}
+
+export async function stopAdvertising(): Promise<void> {
+  await invoke('stop_advertising')
+}
+
 export interface StartResponderArgs {
   code?: string | null
   ttl_seconds?: number | null

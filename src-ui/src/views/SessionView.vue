@@ -13,9 +13,11 @@ import {
   listenPairingResult,
   listPairedPeers,
   pickPeerIp,
+  startAdvertising,
   startLink,
   startPairInitiator,
   startPairResponder,
+  stopAdvertising,
   stopLink,
   type LocalIdentity,
 } from '../ipc'
@@ -112,23 +114,33 @@ async function setupSession() {
   if (useCustomCode.value && !validateCustomCode()) return
   customCodeError.value = ''
   try {
-    await startPairResponder({
-      code: useCustomCode.value ? customCode.value.trim() : null,
-      ttl_seconds: ttlSeconds.value,
-    })
+    // Order matters: bind the data link first (so the port is up before we
+    // advertise), then turn on mDNS so peers can find this host, then arm
+    // the pairing code. mDNS broadcast only happens here — never on app
+    // launch — so we don't appear in others' lists until the user opts in.
     await startLink({
       kind: 'receiver',
       listen: listenAddr.value,
       inject: enableInject.value,
     })
+    await startAdvertising()
+    await startPairResponder({
+      code: useCustomCode.value ? customCode.value.trim() : null,
+      ttl_seconds: ttlSeconds.value,
+    })
     // The actual code arrives via the pairing-code event below.
   } catch (e) {
+    // Roll back on failure so we don't leave a half-started session.
+    stopAdvertising().catch(() => undefined)
+    stopLink().catch(() => undefined)
+    cancelPairing().catch(() => undefined)
     status.value = { kind: 'failed', reason: String(e) }
   }
 }
 
 async function stopSession() {
   await cancelPairing().catch(() => undefined)
+  await stopAdvertising().catch(() => undefined)
   await stopLink().catch(() => undefined)
   status.value = { kind: 'idle' }
   hostingPeer.value = null

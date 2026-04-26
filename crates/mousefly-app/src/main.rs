@@ -22,7 +22,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use mousefly_core::{Frame, Monitor};
-use mousefly_discovery::{AdvertiseConfig, Advertiser, Browser, DiscoveredPeer};
+use mousefly_discovery::{AdvertiseConfig, Browser, DiscoveredPeer};
 use mousefly_input::{install_kill_switch, permissions_granted, InputBackend, Platform};
 use mousefly_net::{connect, serve, Endpoint, LinkHealth};
 use serde::Serialize;
@@ -245,6 +245,8 @@ fn main() -> Result<()> {
             start_link,
             stop_link,
             current_role,
+            start_advertising,
+            stop_advertising,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -308,7 +310,11 @@ fn main() -> Result<()> {
                         fingerprint_hex: pair_fp_hex.clone(),
                         host_id_hex: host_id_hex.clone(),
                     };
-                    spawn_pair_daemon(app_handle.clone(), advertise_cfg, pair_fp_hex);
+                    app.manage(Arc::new(HostingRuntime {
+                        advertiser: AsyncMutex::new(None),
+                        advertise_cfg,
+                    }));
+                    spawn_pair_daemon(app_handle.clone(), pair_fp_hex);
                 }
                 Err(e) => {
                     warn!("pair endpoint init failed (pairing disabled): {e:#}");
@@ -409,18 +415,44 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
-/// Brings up mDNS advertising + browsing and the pair-acceptor task. Runs
-/// for the lifetime of the process; if any piece errors out, we log and the
-/// app keeps running with its data link role.
-fn spawn_pair_daemon(app: AppHandle, advertise: AdvertiseConfig, own_fp_hex: String) {
+/// Hosting runtime: holds the lazily-started mDNS Advertiser. Idle on app
+/// launch — only set when the user clicks "Start session" in the GUI.
+struct HostingRuntime {
+    advertiser: AsyncMutex<Option<mousefly_discovery::Advertiser>>,
+    advertise_cfg: AdvertiseConfig,
+}
+
+#[tauri::command]
+async fn start_advertising(
+    runtime: tauri::State<'_, Arc<HostingRuntime>>,
+) -> std::result::Result<(), String> {
+    let mut guard = runtime.advertiser.lock().await;
+    if guard.is_some() {
+        return Ok(());
+    }
+    let adv = mousefly_discovery::Advertiser::start(runtime.advertise_cfg.clone())
+        .map_err(|e| format!("advertise: {e:#}"))?;
+    *guard = Some(adv);
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_advertising(
+    runtime: tauri::State<'_, Arc<HostingRuntime>>,
+) -> std::result::Result<(), String> {
+    if let Some(adv) = runtime.advertiser.lock().await.take() {
+        // Best-effort: the discovery API returns a Result we don't propagate.
+        let _ = adv.stop();
+    }
+    Ok(())
+}
+
+/// Brings up the **passive** discovery side (mDNS browser) and the always-on
+/// pair acceptor. Advertising is opt-in via `start_advertising` — see
+/// [`HostingRuntime`] — so the app doesn't appear in other devices' lists
+/// until the user explicitly hosts a session.
+fn spawn_pair_daemon(app: AppHandle, own_fp_hex: String) {
     tauri::async_runtime::spawn(async move {
-        let _adv = match Advertiser::start(advertise) {
-            Ok(a) => Some(a),
-            Err(e) => {
-                warn!("mdns advertise failed: {e:#}");
-                None
-            }
-        };
         let browser = match Browser::start(own_fp_hex) {
             Ok(b) => b,
             Err(e) => {
