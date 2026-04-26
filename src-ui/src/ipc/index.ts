@@ -161,9 +161,10 @@ export async function cancelPairing(): Promise<void> {
 
 // --- Layout IPC ------------------------------------------------------------
 
-export interface WireMonitorId {
-  0: number
-}
+// Rust's `MonitorId(pub u64)` is a transparent newtype on the wire — serde
+// emits the bare integer, not `{ "0": n }`. Older builds wrapped it; accept
+// both shapes so a stale peer still maps cleanly.
+export type WireMonitorId = number | { 0: number }
 
 export interface WireMonitor {
   id: WireMonitorId
@@ -173,6 +174,14 @@ export interface WireMonitor {
   physical_size_mm: [number, number] | null
   position_in_local_vd: [number, number]
   primary: boolean
+}
+
+export function monitorIdToString(id: WireMonitorId): string {
+  const n = typeof id === 'number' ? id : (id?.[0] ?? 0)
+  // u64 can exceed JS Number.MAX_SAFE_INTEGER but the Rust hash output is
+  // serde-i64-clamped in practice; if it ever overflows we'd see precision
+  // loss, not a crash.
+  return n.toString(16)
 }
 
 export interface LayoutEvent {

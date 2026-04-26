@@ -10,6 +10,7 @@ import {
   listenLinkHealth,
   listenLinkStatus,
   listenRole,
+  monitorIdToString,
   type WireMonitor,
 } from './ipc'
 import SessionView from './views/SessionView.vue'
@@ -29,7 +30,7 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   const [x, y] = m.position_in_local_vd
   const mm = m.physical_size_mm
   return {
-    id: m.id[0].toString(16),
+    id: monitorIdToString(m.id),
     name: m.name,
     widthPx: w,
     heightPx: h,
@@ -149,17 +150,23 @@ onMounted(async () => {
     link.statusText = s.text
   })
   unlistenLayout = await listenLayout((e) => {
-    const wasNew =
-      (e.side === 'local' && layoutStore.local === null) ||
-      (e.side === 'remote' && layoutStore.remote === null)
-    layoutStore.setHost({
-      side: e.side,
-      instanceName: e.side === 'local' ? 'This host' : link.peer || 'Remote',
-      offsetX: 0,
-      offsetY: 0,
-      monitors: e.monitors.map(mapMonitor),
-    })
-    if (wasNew) layoutStore.resetOffsets()
+    try {
+      const wasNew =
+        (e.side === 'local' && layoutStore.local === null) ||
+        (e.side === 'remote' && layoutStore.remote === null)
+      layoutStore.setHost({
+        side: e.side,
+        instanceName: e.side === 'local' ? 'This host' : link.peer || 'Remote',
+        offsetX: 0,
+        offsetY: 0,
+        monitors: e.monitors.map(mapMonitor),
+      })
+      if (wasNew) layoutStore.resetOffsets()
+    } catch (err) {
+      // Don't let a malformed monitor frame silently kill the listener — log
+      // so it surfaces in `bun tauri dev`/devtools.
+      console.error('layout event handling failed', err, e)
+    }
   })
 })
 

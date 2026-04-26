@@ -85,13 +85,18 @@ function measure() {
 
 let resizeObserver: ResizeObserver | null = null
 
+// Whether the user has panned/zoomed manually since the last fit. Until
+// they do, we keep auto-refitting on viewport / data changes so the content
+// stays centred.
+const userInteracted = ref(false)
+
 onMounted(() => {
   measure()
-  recomputeFit()
   resetView()
   if (svgEl.value) {
     resizeObserver = new ResizeObserver(() => {
       measure()
+      if (!userInteracted.value) resetView()
     })
     resizeObserver.observe(svgEl.value)
   }
@@ -103,10 +108,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 
+// Refit (and reset view if untouched) whenever monitor data lands or the
+// user resets offsets. Without this, the canvas mounted with empty data
+// would never recenter when the first layout event arrived.
 watch(
   () => [layout.local, layout.remote],
   () => {
     recomputeFit()
+    if (!userInteracted.value) resetView()
   },
   { deep: true },
 )
@@ -133,6 +142,7 @@ function onWheel(e: WheelEvent) {
   view.panX = sx - (sx - view.panX) * ratio
   view.panY = sy - (sy - view.panY) * ratio
   view.zoom = next
+  userInteracted.value = true
 }
 
 function onPointerDownBackground(e: PointerEvent) {
@@ -148,6 +158,7 @@ function onPointerDownBackground(e: PointerEvent) {
     pointerId: e.pointerId,
   }
   ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  userInteracted.value = true
 }
 
 function onPointerDownHost(e: PointerEvent, side: HostSide) {
@@ -198,6 +209,7 @@ function onPointerUp(e: PointerEvent) {
 function onContextMenu(e: MouseEvent) {
   e.preventDefault()
   layout.resetOffsets()
+  userInteracted.value = false
   pushLayoutToRust()
 }
 
@@ -224,6 +236,7 @@ function onKeyDown(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
     layout.resetOffsets()
+    userInteracted.value = false
   }
 }
 
