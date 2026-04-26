@@ -106,8 +106,7 @@ pub async fn run_pair_acceptor(state: PairingState, app: AppHandle) {
                 let fp = state.data_cert_fingerprint_hex.clone();
                 let name = state.instance_name.clone();
                 tokio::spawn(async move {
-                    let result =
-                        run_responder((recv, send), &pending_code, &id, &fp, &name).await;
+                    let result = run_responder((recv, send), &pending_code, &id, &fp, &name).await;
                     let succeeded = result.is_ok();
                     finish_pairing(app2.clone(), store, result).await;
                     if !succeeded {

@@ -124,7 +124,9 @@ pub enum Side {
 
 fn mm_per_pixel(m: &Monitor) -> (f32, f32) {
     match m.physical_size_mm {
-        Some((mm_w, mm_h)) if mm_w > 0 && mm_h > 0 && m.logical_size_px.0 > 0 && m.logical_size_px.1 > 0 => {
+        Some((mm_w, mm_h))
+            if mm_w > 0 && mm_h > 0 && m.logical_size_px.0 > 0 && m.logical_size_px.1 > 0 =>
+        {
             let scale = m.scale_factor.max(1.0);
             // physical_size_mm is reported in physical pixels' worth of mm.
             // logical_size_px is points. Convert: mm-per-point = mm / (logical * scale).

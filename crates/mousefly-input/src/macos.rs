@@ -300,8 +300,7 @@ fn event_to_frame(etype: CGEventType, evt: &CGEvent) -> Option<Frame> {
             Some(Frame::Scroll { dx, dy })
         }
         CGEventType::KeyDown | CGEventType::KeyUp => {
-            let mac_code =
-                evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            let mac_code = evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
             let hid = keymap::from_macos(mac_code)?;
             let down = matches!(etype, CGEventType::KeyDown);
             Some(Frame::Key {
@@ -314,8 +313,7 @@ fn event_to_frame(etype: CGEventType, evt: &CGEvent) -> Option<Frame> {
             // macOS: pure-modifier transitions (Shift / Cmd) come as
             // FlagsChanged with the keycode of the modifier itself. Translate
             // through HID so the receiver doesn't need to know mac VKs.
-            let mac_code =
-                evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
+            let mac_code = evt.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
             let hid = keymap::from_macos(mac_code)?;
             let modifiers = cgflags_to_modifiers(evt.get_flags());
             Some(Frame::Key {

@@ -48,7 +48,11 @@ pub fn spawn_poller(outbound: Sender<Frame>, mark: Watermark) {
             }
             *guard = Some(current.clone());
             drop(guard);
-            if outbound.send(Frame::Clipboard { text: current }).await.is_err() {
+            if outbound
+                .send(Frame::Clipboard { text: current })
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -76,7 +80,11 @@ async fn read_clipboard() -> std::result::Result<Option<String>, arboard::Error>
         })
     })
     .await
-    .unwrap_or_else(|join_err| Err(arboard::Error::Unknown { description: join_err.to_string() }))
+    .unwrap_or_else(|join_err| {
+        Err(arboard::Error::Unknown {
+            description: join_err.to_string(),
+        })
+    })
 }
 
 async fn write_clipboard(text: String) -> std::result::Result<(), arboard::Error> {
@@ -85,5 +93,9 @@ async fn write_clipboard(text: String) -> std::result::Result<(), arboard::Error
         cb.set_text(text)
     })
     .await
-    .unwrap_or_else(|join_err| Err(arboard::Error::Unknown { description: join_err.to_string() }))
+    .unwrap_or_else(|join_err| {
+        Err(arboard::Error::Unknown {
+            description: join_err.to_string(),
+        })
+    })
 }

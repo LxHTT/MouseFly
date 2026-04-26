@@ -13,7 +13,7 @@ mod clipboard;
 mod layout;
 mod pairing;
 
-use layout::{Side, SharedLayout};
+use layout::{SharedLayout, Side};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -123,12 +123,7 @@ async fn stop_link(
 async fn current_role(
     runtime: tauri::State<'_, Arc<LinkRuntime>>,
 ) -> std::result::Result<Role, String> {
-    Ok(runtime
-        .role
-        .lock()
-        .await
-        .clone()
-        .unwrap_or(Role::Idle))
+    Ok(runtime.role.lock().await.clone().unwrap_or(Role::Idle))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -349,9 +344,7 @@ fn main() -> Result<()> {
 
 #[tauri::command]
 async fn get_autostart(app: AppHandle) -> std::result::Result<bool, String> {
-    app.autolaunch()
-        .is_enabled()
-        .map_err(|e| format!("{e:#}"))
+    app.autolaunch().is_enabled().map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -590,9 +583,12 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                                 {
                                     continue;
                                 }
-                                let gated =
-                                    layout::gate_outbound(frame, &layout_for_pump, &mut last_cursor)
-                                        .await;
+                                let gated = layout::gate_outbound(
+                                    frame,
+                                    &layout_for_pump,
+                                    &mut last_cursor,
+                                )
+                                .await;
                                 if let Some(frame) = gated {
                                     if outbound.send(frame).await.is_err() {
                                         break;
