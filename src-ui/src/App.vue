@@ -43,23 +43,32 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   }
 }
 
-const TAB_SIZES: Record<Tab, { width: number; height: number }> = {
-  link: { width: 480, height: 480 },
-  layout: { width: 760, height: 600 },
-  pair: { width: 540, height: 680 },
+// Per-tab width (the layout canvas needs more horizontal room). Height
+// follows content via a ResizeObserver, so dragging a peer list open or
+// expanding a section grows the window naturally.
+const TAB_WIDTHS: Record<Tab, number> = {
+  link: 500,
+  layout: 760,
+  pair: 540,
 }
+const OUTER_PADDING = 40 // main.p-5 × 2 sides
+const cardRef = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
 
-async function applyTabSize(t: Tab) {
+async function fitWindowToContent() {
+  if (!cardRef.value) return
+  const w = TAB_WIDTHS[tab.value]
+  const h = cardRef.value.offsetHeight + OUTER_PADDING
   try {
-    const w = getCurrentWindow()
-    await w.setSize(new LogicalSize(TAB_SIZES[t].width, TAB_SIZES[t].height))
+    await getCurrentWindow().setSize(new LogicalSize(w, h))
   } catch (_e) {
-    /* ignore — non-Tauri context (vite preview, tests) */
+    /* non-Tauri (vite preview, tests) */
   }
 }
 
-watch(tab, (t) => {
-  applyTabSize(t)
+watch(tab, async () => {
+  await new Promise((r) => requestAnimationFrame(r))
+  fitWindowToContent()
 })
 
 function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: boolean }) {
@@ -77,7 +86,12 @@ function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: b
 }
 
 onMounted(async () => {
-  applyTabSize(tab.value)
+  // Watch the inner card's size and resize the OS window to match.
+  if (cardRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => fitWindowToContent())
+    resizeObserver.observe(cardRef.value)
+  }
+  fitWindowToContent()
   // Fetch the authoritative role first — Rust may have emitted "role" before
   // the webview's listener was registered.
   try {
@@ -117,6 +131,7 @@ onBeforeUnmount(() => {
   unlistenHealth?.()
   unlistenStatus?.()
   unlistenLayout?.()
+  resizeObserver?.disconnect()
 })
 
 const tabClass = (t: Tab) =>
@@ -135,8 +150,11 @@ const linkDot = computed(() => {
 </script>
 
 <template>
-  <main class="min-h-screen bg-zinc-950 text-zinc-100 font-mono p-5">
-    <div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 space-y-4">
+  <main class="bg-zinc-950 text-zinc-100 font-mono p-5">
+    <div
+      ref="cardRef"
+      class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 space-y-4"
+    >
       <header class="flex items-center justify-between">
         <h1 class="text-xl font-semibold tracking-tight flex items-center gap-2">
           <span
