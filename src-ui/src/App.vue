@@ -43,27 +43,66 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   }
 }
 
-// Per-tab width (the layout canvas needs more horizontal room). Height
-// follows content via a ResizeObserver, so dragging a peer list open or
-// expanding a section grows the window naturally.
-const TAB_WIDTHS: Record<Tab, number> = {
-  link: 500,
-  layout: 760,
-  pair: 540,
+// Per-tab width + content-driven height with a per-tab minimum, animated
+// over ~220ms with cubic ease-out. The layout canvas needs horizontal room;
+// link/pair pick a comfortable minimum so the inner cards don't crush.
+const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
+  link: { width: 500, minHeight: 580 },
+  layout: { width: 760, minHeight: 620 },
+  pair: { width: 540, minHeight: 620 },
 }
 const OUTER_PADDING = 40 // main.p-5 × 2 sides
+const ANIM_DURATION_MS = 220
 const cardRef = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
+let currentSize = { width: 0, height: 0 }
+let firstResize = true
+let animFrame: number | null = null
+let pendingTimer: ReturnType<typeof setTimeout> | null = null
 
-async function fitWindowToContent() {
-  if (!cardRef.value) return
-  const w = TAB_WIDTHS[tab.value]
-  const h = cardRef.value.offsetHeight + OUTER_PADDING
+async function setWindow(w: number, h: number) {
+  currentSize = { width: w, height: h }
   try {
     await getCurrentWindow().setSize(new LogicalSize(w, h))
   } catch (_e) {
     /* non-Tauri (vite preview, tests) */
   }
+}
+
+function animateToSize(targetW: number, targetH: number) {
+  if (firstResize) {
+    firstResize = false
+    setWindow(targetW, targetH)
+    return
+  }
+  if (animFrame !== null) cancelAnimationFrame(animFrame)
+  const startW = currentSize.width
+  const startH = currentSize.height
+  if (startW === targetW && startH === targetH) return
+  const t0 = performance.now()
+  const tick = () => {
+    const t = Math.min(1, (performance.now() - t0) / ANIM_DURATION_MS)
+    const e = 1 - Math.pow(1 - t, 3) // cubic ease-out
+    const w = Math.round(startW + (targetW - startW) * e)
+    const h = Math.round(startH + (targetH - startH) * e)
+    setWindow(w, h)
+    if (t < 1) {
+      animFrame = requestAnimationFrame(tick)
+    } else {
+      animFrame = null
+    }
+  }
+  animFrame = requestAnimationFrame(tick)
+}
+
+function fitWindowToContent() {
+  if (!cardRef.value) return
+  const cfg = TAB_SIZES[tab.value]
+  const w = cfg.width
+  const h = Math.max(cfg.minHeight, cardRef.value.offsetHeight + OUTER_PADDING)
+  // Coalesce a flurry of ResizeObserver calls into one animation tick.
+  if (pendingTimer !== null) clearTimeout(pendingTimer)
+  pendingTimer = setTimeout(() => animateToSize(w, h), 16)
 }
 
 watch(tab, async () => {
