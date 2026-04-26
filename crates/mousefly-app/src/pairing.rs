@@ -22,13 +22,15 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-/// How long a generated pairing code is valid for. Apple / WhatsApp / Signal
-/// all use ~5 minutes; matching that.
-const CODE_TTL: Duration = Duration::from_secs(5 * 60);
+/// Default TTL when the caller doesn't pin one. Apple / WhatsApp / Signal all
+/// use ~5 minutes for code lifetime; matching that.
+const DEFAULT_CODE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Max consecutive failed attempts before the responder forces a fresh code.
 /// SPAKE2 already requires a full handshake per attempt (which is expensive
 /// online), but this is defence-in-depth.
 const MAX_FAILED_ATTEMPTS: u32 = 5;
+/// Min code length we'll accept from the user.
+const MIN_USER_CODE_LEN: usize = 6;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PairingCodePayload {
@@ -54,12 +56,16 @@ pub struct LocalIdentityPayload {
 /// Pending pairing slot. `expires_at` is checked at the start of every
 /// incoming attempt; `failed_attempts` is bumped on PairingError and forces a
 /// fresh code once it crosses MAX_FAILED_ATTEMPTS so brute-force attempts
-/// can't stack.
+/// can't stack. `auto_refresh` is true when the code was randomly generated
+/// AND the user picked a TTL — on expiry the daemon mints a fresh one and
+/// emits a `pairing-code` event instead of going cold.
 #[derive(Debug, Clone)]
 pub struct PendingCode {
     pub raw: String,
-    pub expires_at: Instant,
+    pub expires_at: Option<Instant>,
+    pub ttl: Option<Duration>,
     pub failed_attempts: u32,
+    pub auto_refresh: bool,
 }
 
 /// Shared mutable state for the pairing daemon.
@@ -87,13 +93,18 @@ pub async fn run_pair_acceptor(state: PairingState, app: AppHandle) {
         // attempt fails, we re-insert below if there are retries left.
         let code = {
             let mut guard = state.pending_code.lock().await;
-            match guard.as_ref() {
-                Some(p) if p.expires_at > Instant::now() => guard.take(),
-                Some(_) => {
-                    *guard = None;
-                    None
-                }
-                None => None,
+            let take_it = match guard.as_ref() {
+                Some(p) => match p.expires_at {
+                    Some(t) => t > Instant::now(),
+                    None => true,
+                },
+                None => false,
+            };
+            if take_it {
+                guard.take()
+            } else {
+                *guard = None;
+                None
             }
         };
         match code {
@@ -116,9 +127,11 @@ pub async fn run_pair_acceptor(state: PairingState, app: AppHandle) {
                             failed_attempts: pending.failed_attempts + 1,
                             ..pending.clone()
                         };
-                        if next.failed_attempts >= MAX_FAILED_ATTEMPTS
-                            || next.expires_at <= Instant::now()
-                        {
+                        let expired = match next.expires_at {
+                            Some(t) => t <= Instant::now(),
+                            None => false,
+                        };
+                        if next.failed_attempts >= MAX_FAILED_ATTEMPTS || expired {
                             *guard = None;
                             let _ = app2.emit(
                                 "pairing-locked",
@@ -182,28 +195,131 @@ async fn finish_pairing(
     }
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct StartResponderArgs {
+    /// User-supplied code. None = auto-generate a 6-digit numeric code.
+    pub code: Option<String>,
+    /// Code lifetime in seconds. None = code never expires until manually stopped.
+    pub ttl_seconds: Option<u64>,
+}
+
 #[tauri::command]
 pub async fn start_pair_responder(
     app: AppHandle,
     state: State<'_, PairingState>,
+    args: StartResponderArgs,
 ) -> std::result::Result<String, String> {
-    let code = generate_pairing_code();
-    let raw = code.replace(' ', "");
-    let expires_at = Instant::now() + CODE_TTL;
-    let expires_unix = mousefly_pair::now_unix() + CODE_TTL.as_secs();
+    let user_supplied = args.code.is_some();
+    let raw = match args.code {
+        Some(c) => {
+            let trimmed = c.trim().to_string();
+            validate_user_code(&trimmed)?;
+            trimmed
+        }
+        None => generate_pairing_code().replace(' ', ""),
+    };
+    let ttl = args.ttl_seconds.map(Duration::from_secs);
+    let expires_at = ttl.map(|t| Instant::now() + t);
+    let expires_unix = ttl.map(|t| mousefly_pair::now_unix() + t.as_secs());
     *state.pending_code.lock().await = Some(PendingCode {
         raw: raw.clone(),
         expires_at,
+        ttl,
         failed_attempts: 0,
+        auto_refresh: !user_supplied && ttl.is_some(),
     });
     let _ = app.emit(
         "pairing-code",
         &PairingCodePayload {
             code: raw.clone(),
-            expires_unix,
+            expires_unix: expires_unix.unwrap_or(0),
         },
     );
-    Ok(code)
+
+    // Spawn the auto-refresh ticker if applicable. It only fires if the slot
+    // still holds the same auto-refresh code at expiry — manual cancel /
+    // successful pair / user-supplied code all cause it to no-op.
+    if !user_supplied {
+        if let Some(ttl) = ttl {
+            let pending_slot = state.pending_code.clone();
+            let app_clone = app.clone();
+            tokio::spawn(async move {
+                refresh_loop(pending_slot, app_clone, ttl).await;
+            });
+        }
+    }
+
+    Ok(format_for_display(&raw))
+}
+
+fn validate_user_code(code: &str) -> std::result::Result<(), String> {
+    if code.len() < MIN_USER_CODE_LEN {
+        return Err(format!(
+            "code must be at least {MIN_USER_CODE_LEN} characters"
+        ));
+    }
+    if !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("code must contain only ASCII letters and digits".into());
+    }
+    Ok(())
+}
+
+fn format_for_display(raw: &str) -> String {
+    if raw.len() == 6 && raw.chars().all(|c| c.is_ascii_digit()) {
+        format!("{} {}", &raw[..3], &raw[3..])
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Runs while there's an auto-refresh pending code in the slot. On expiry
+/// (or earlier if the slot is taken / cancelled), regenerates and emits a
+/// fresh `pairing-code` event. Returns when the slot no longer holds an
+/// auto-refresh entry.
+async fn refresh_loop(
+    pending_slot: Arc<Mutex<Option<PendingCode>>>,
+    app: AppHandle,
+    ttl: Duration,
+) {
+    loop {
+        tokio::time::sleep(ttl).await;
+        let mut guard = pending_slot.lock().await;
+        let still_ours = matches!(
+            guard.as_ref(),
+            Some(p) if p.auto_refresh && p.ttl == Some(ttl)
+                && p.expires_at.map(|t| t <= Instant::now()).unwrap_or(false)
+        );
+        if !still_ours {
+            return;
+        }
+        let new_raw = generate_pairing_code().replace(' ', "");
+        let new_expires_at = Instant::now() + ttl;
+        let new_expires_unix = mousefly_pair::now_unix() + ttl.as_secs();
+        *guard = Some(PendingCode {
+            raw: new_raw.clone(),
+            expires_at: Some(new_expires_at),
+            ttl: Some(ttl),
+            failed_attempts: 0,
+            auto_refresh: true,
+        });
+        drop(guard);
+        let _ = app.emit(
+            "pairing-code",
+            &PairingCodePayload {
+                code: new_raw,
+                expires_unix: new_expires_unix,
+            },
+        );
+    }
+}
+
+/// Convenience: keep the old default-TTL behaviour (5 min, auto-refresh).
+#[allow(dead_code)]
+pub async fn default_responder_args() -> StartResponderArgs {
+    StartResponderArgs {
+        code: None,
+        ttl_seconds: Some(DEFAULT_CODE_TTL.as_secs()),
+    }
 }
 
 #[tauri::command]

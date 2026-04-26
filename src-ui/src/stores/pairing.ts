@@ -5,6 +5,7 @@ export interface DiscoveredPeer {
   instance_name: string
   addrs: string[]
   port: number
+  data_port: number
   fingerprint_hex: string
   host_id_hex: string
   is_self: boolean

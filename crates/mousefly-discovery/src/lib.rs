@@ -26,6 +26,7 @@ use tracing::debug;
 const SERVICE_TYPE: &str = "_mousefly._udp.local.";
 const TXT_FINGERPRINT: &str = "fp";
 const TXT_HOST_ID: &str = "id";
+const TXT_DATA_PORT: &str = "dp";
 const EVENT_BUFFER: usize = 64;
 
 /// Inputs for [`Advertiser::start`].
@@ -34,8 +35,12 @@ pub struct AdvertiseConfig {
     /// Service instance label. The OS hostname is a sensible default; falls
     /// back to `"mousefly"` if the caller has nothing better.
     pub instance_name: String,
-    /// QUIC listening port advertised in the SRV record.
+    /// Pair-handshake QUIC port (SRV record). The joiner dials this port for
+    /// the SPAKE2 exchange.
     pub port: u16,
+    /// Data-link QUIC port (TXT `dp`). The joiner dials this port for actual
+    /// pointer / key forwarding once pairing succeeds.
+    pub data_port: u16,
     /// 64-char hex SHA-256 of the host's pinning cert.
     pub fingerprint_hex: String,
     /// 64-char hex ed25519 public key. May be empty until pairing identity exists.
@@ -62,6 +67,7 @@ impl Advertiser {
         let mut properties: HashMap<String, String> = HashMap::new();
         properties.insert(TXT_FINGERPRINT.to_string(), cfg.fingerprint_hex.clone());
         properties.insert(TXT_HOST_ID.to_string(), cfg.host_id_hex.clone());
+        properties.insert(TXT_DATA_PORT.to_string(), cfg.data_port.to_string());
 
         let no_addrs: &[IpAddr] = &[];
         let info = ServiceInfo::new(
@@ -98,7 +104,11 @@ impl Advertiser {
 pub struct DiscoveredPeer {
     pub instance_name: String,
     pub addrs: Vec<IpAddr>,
+    /// Pair-handshake port (SRV).
     pub port: u16,
+    /// Data-link port (TXT `dp`). 0 if missing — joiner can fall back to
+    /// the pair port or prompt the user.
+    pub data_port: u16,
     pub fingerprint_hex: String,
     pub host_id_hex: String,
     pub is_self: bool,
@@ -235,6 +245,10 @@ fn peer_from_service_info(info: &ServiceInfo, own_fp: &str) -> DiscoveredPeer {
         .get_property_val_str(TXT_HOST_ID)
         .unwrap_or("")
         .to_string();
+    let data_port = props
+        .get_property_val_str(TXT_DATA_PORT)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
 
     let is_self = !own_fp.is_empty() && fingerprint_hex == own_fp;
 
@@ -242,6 +256,7 @@ fn peer_from_service_info(info: &ServiceInfo, own_fp: &str) -> DiscoveredPeer {
         instance_name,
         addrs,
         port: info.get_port(),
+        data_port,
         fingerprint_hex,
         host_id_hex,
         is_self,
@@ -312,6 +327,7 @@ mod tests {
         let cfg = AdvertiseConfig {
             instance_name: "mousefly-test-instance".to_string(),
             port: 65123,
+            data_port: 65124,
             fingerprint_hex: "ff".repeat(32),
             host_id_hex: "ee".repeat(32),
         };

@@ -12,12 +12,11 @@ import {
   listenRole,
   type WireMonitor,
 } from './ipc'
-import LinkView from './views/LinkView.vue'
+import SessionView from './views/SessionView.vue'
 import LayoutView from './views/LayoutView.vue'
-import PairingView from './views/PairingView.vue'
 
-type Tab = 'link' | 'layout' | 'pair'
-const tab = ref<Tab>('link')
+type Tab = 'session' | 'layout'
+const tab = ref<Tab>('session')
 const link = useLinkStore()
 const layoutStore = useLayoutStore()
 let unlistenRole: UnlistenFn | null = null
@@ -47,9 +46,8 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
 // over ~220ms with cubic ease-out. The layout canvas needs horizontal room;
 // link/pair pick a comfortable minimum so the inner cards don't crush.
 const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
-  link: { width: 520, minHeight: 660 },
+  session: { width: 560, minHeight: 720 },
   layout: { width: 780, minHeight: 700 },
-  pair: { width: 560, minHeight: 720 },
 }
 const OUTER_PADDING = 40 // main.p-5 × 2 sides
 const ANIM_DURATION_MS = 220
@@ -203,9 +201,12 @@ const linkDot = computed(() => {
           MouseFly
         </h1>
         <nav class="flex gap-1 -mb-1">
-          <button :class="tabClass('link').value" @click="tab = 'link'">Link</button>
-          <button :class="tabClass('layout').value" @click="tab = 'layout'">Layout</button>
-          <button :class="tabClass('pair').value" @click="tab = 'pair'">Pair</button>
+          <button :class="tabClass('session').value" @click="tab = 'session'">
+            Session
+          </button>
+          <button :class="tabClass('layout').value" @click="tab = 'layout'">
+            Layout
+          </button>
         </nav>
       </header>
 
@@ -218,9 +219,8 @@ const linkDot = computed(() => {
         :leave-to-class="'opacity-0'"
         mode="out-in"
       >
-        <LinkView v-if="tab === 'link'" />
-        <LayoutView v-else-if="tab === 'layout'" />
-        <PairingView v-else />
+        <SessionView v-if="tab === 'session'" />
+        <LayoutView v-else />
       </Transition>
     </div>
   </main>

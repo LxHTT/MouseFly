@@ -129,8 +129,15 @@ export async function currentRole(): Promise<RoleEvent> {
   return await invoke<RoleEvent>('current_role')
 }
 
-export async function startPairResponder(): Promise<string> {
-  return await invoke<string>('start_pair_responder')
+export interface StartResponderArgs {
+  code?: string | null
+  ttl_seconds?: number | null
+}
+
+export async function startPairResponder(
+  args: StartResponderArgs = {},
+): Promise<string> {
+  return await invoke<string>('start_pair_responder', { args })
 }
 
 export async function startPairInitiator(

@@ -296,9 +296,15 @@ fn main() -> Result<()> {
                     };
                     app.manage(pairing_state);
 
+                    // Default data port matches the convention used by the
+                    // `pnpm receiver` script and the Vue UI's Setup form. If
+                    // the user picks a different listen addr, mDNS advertises
+                    // 7878 anyway — joiners over manual entry can override.
+                    const DEFAULT_DATA_PORT: u16 = 7878;
                     let advertise_cfg = AdvertiseConfig {
                         instance_name: instance_name.clone(),
                         port: pair_port,
+                        data_port: DEFAULT_DATA_PORT,
                         fingerprint_hex: pair_fp_hex.clone(),
                         host_id_hex: host_id_hex.clone(),
                     };
