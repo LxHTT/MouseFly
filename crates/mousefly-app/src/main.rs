@@ -11,7 +11,9 @@
 
 mod pairing;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -161,6 +163,8 @@ fn main() -> Result<()> {
             pairing::cancel_pairing,
             get_autostart,
             set_autostart,
+            get_lock_to_host,
+            set_lock_to_host,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -391,21 +395,33 @@ async fn run_role(role: Role, app: AppHandle) -> Result<()> {
     }
 }
 
+/// Lock-to-host: when set, the sender drops pointer/key frames before
+/// forwarding (RTT and Heartbeat still flow so the link stays warm). Toggled
+/// from the GUI via `set_lock_to_host`.
+static LOCK_ENGAGED: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn get_lock_to_host() -> bool {
+    LOCK_ENGAGED.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_lock_to_host(enable: bool, app: AppHandle) {
+    LOCK_ENGAGED.store(enable, Ordering::Relaxed);
+    let _ = app.emit("lock-to-host", &enable);
+}
+
 async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
     let backend = Platform::new();
-
-    // Publish our local monitor set to the GUI immediately — useful even
-    // before the link is up.
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
 
-    emit_status(&app, "info", format!("Connecting to {peer}…"));
-    let mut link = connect(peer).await?;
-    info!("link up; dialing capture");
+    // Capture is started exactly once and feeds a tokio broadcast channel so
+    // we can transparently re-attach to a fresh Link on each reconnect attempt.
     emit_status(
         &app,
         "info",
-        "Link up — requesting input capture (may prompt for permissions)",
+        "Requesting input capture (may prompt for permissions)",
     );
     let capture = match backend.start_capture() {
         Ok(c) => c,
@@ -414,35 +430,77 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
             return Err(e);
         }
     };
-    info!("forwarding events to {peer}");
-    emit_status(&app, "info", format!("Forwarding events to {peer}"));
-
-    // Send our layout to the peer so they can render the global arrangement.
-    let _ = link
-        .outbound
-        .send(Frame::LayoutUpdate {
-            monitors: monitors.clone(),
-        })
-        .await;
-
-    spawn_health_emitter(app.clone(), link.health.clone(), "sender");
-
-    let outbound = link.outbound.clone();
+    let (cap_tx, _cap_rx0) = tokio::sync::broadcast::channel::<Frame>(1024);
+    let cap_tx_for_pump = cap_tx.clone();
     tokio::task::spawn_blocking(move || {
         while let Ok(frame) = capture.recv() {
-            if outbound.blocking_send(frame).is_err() {
-                break;
-            }
+            let _ = cap_tx_for_pump.send(frame);
         }
     });
 
-    while let Some(inbound) = link.inbound.recv().await {
-        match inbound.frame {
-            Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
-            other => debug!(?other, "sender saw inbound frame (ignored)"),
+    let mut attempt: u32 = 0;
+    loop {
+        emit_status(&app, "info", format!("Connecting to {peer}…"));
+        match connect(peer).await {
+            Ok(mut link) => {
+                attempt = 0;
+                info!("forwarding events to {peer}");
+                emit_status(&app, "info", format!("Forwarding events to {peer}"));
+
+                let _ = link
+                    .outbound
+                    .send(Frame::LayoutUpdate {
+                        monitors: monitors.clone(),
+                    })
+                    .await;
+
+                spawn_health_emitter(app.clone(), link.health.clone(), "sender");
+
+                let outbound = link.outbound.clone();
+                let mut cap_rx = cap_tx.subscribe();
+                let pump = tokio::spawn(async move {
+                    loop {
+                        match cap_rx.recv().await {
+                            Ok(frame) => {
+                                if LOCK_ENGAGED.load(Ordering::Relaxed)
+                                    && !matches!(
+                                        frame,
+                                        Frame::Heartbeat
+                                            | Frame::RttProbe { .. }
+                                            | Frame::RttReply { .. }
+                                    )
+                                {
+                                    continue;
+                                }
+                                if outbound.send(frame).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                });
+
+                while let Some(inbound) = link.inbound.recv().await {
+                    match inbound.frame {
+                        Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        other => debug!(?other, "sender saw inbound frame (ignored)"),
+                    }
+                }
+                pump.abort();
+                emit_status(&app, "warn", "Link dropped — reconnecting…");
+            }
+            Err(e) => {
+                emit_status(&app, "warn", format!("Connect failed: {e:#} — retrying"));
+            }
         }
+
+        // Exponential backoff: 250 ms, 500, 1s, 2s, 4s, capped.
+        let backoff_ms = 250u64 << attempt.min(4);
+        attempt = attempt.saturating_add(1);
+        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
     }
-    Ok(())
 }
 
 async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
@@ -450,35 +508,47 @@ async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
 
-    info!("waiting for sender on {addr}");
-    emit_status(&app, "info", format!("Listening on {addr} for sender…"));
-    let mut link = serve(addr).await?;
-    info!(inject, "link up; receiving events");
-    emit_status(
-        &app,
-        "info",
-        format!(
-            "Sender connected; injection {}",
-            if inject { "ON" } else { "off" }
-        ),
-    );
+    loop {
+        info!("waiting for sender on {addr}");
+        emit_status(&app, "info", format!("Listening on {addr} for sender…"));
+        match serve(addr).await {
+            Ok(mut link) => {
+                info!(inject, "link up; receiving events");
+                emit_status(
+                    &app,
+                    "info",
+                    format!(
+                        "Sender connected; injection {}",
+                        if inject { "ON" } else { "off" }
+                    ),
+                );
+                let _ = link
+                    .outbound
+                    .send(Frame::LayoutUpdate {
+                        monitors: monitors.clone(),
+                    })
+                    .await;
+                spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
 
-    let _ = link.outbound.send(Frame::LayoutUpdate { monitors }).await;
-
-    spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
-
-    while let Some(inbound) = link.inbound.recv().await {
-        match inbound.frame {
-            Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
-            ref f if inject => {
-                if let Err(e) = backend.inject(f) {
-                    warn!("inject failed: {e:#}");
+                while let Some(inbound) = link.inbound.recv().await {
+                    match inbound.frame {
+                        Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        ref f if inject => {
+                            if let Err(e) = backend.inject(f) {
+                                warn!("inject failed: {e:#}");
+                            }
+                        }
+                        _ => {}
+                    }
                 }
+                emit_status(&app, "warn", "Sender disconnected — waiting for next");
             }
-            _ => {}
+            Err(e) => {
+                emit_status(&app, "warn", format!("Listen failed: {e:#} — retrying"));
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     }
-    Ok(())
 }
 
 fn spawn_health_emitter(
