@@ -4,12 +4,14 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { usePairingStore, type DiscoveredPeer } from '../stores/pairing'
 import {
   cancelPairing,
+  formatPeerAddr,
   getLocalIdentity,
   listenDiscoveredPeers,
   listenPairingCode,
   listenPairingLocked,
   listenPairingResult,
   listPairedPeers,
+  pickPeerIp,
   startPairInitiator,
   startPairResponder,
   type LocalIdentity,
@@ -74,7 +76,12 @@ async function startResponder() {
 }
 
 function pickPeer(peer: DiscoveredPeer) {
-  const addr = `${peer.addrs[0]}:${peer.port}`
+  const ip = pickPeerIp(peer.addrs)
+  if (!ip) {
+    pairing.state = { kind: 'failed', reason: 'peer has no usable address' }
+    return
+  }
+  const addr = formatPeerAddr(ip, peer.port)
   pairing.state = { kind: 'entering', peerLabel: peer.instance_name, peerAddr: addr }
   codeInput.value = ''
 }
@@ -196,7 +203,8 @@ async function copy(text: string) {
           <div class="min-w-0">
             <div class="text-sm truncate">{{ peer.instance_name }}</div>
             <div class="text-xs text-zinc-500 font-mono truncate">
-              {{ peer.addrs[0] }}:{{ peer.port }} · fp {{ peer.fingerprint_hex.slice(0, 12) }}…
+              {{ formatPeerAddr(pickPeerIp(peer.addrs) ?? peer.addrs[0] ?? '?', peer.port) }} ·
+              fp {{ peer.fingerprint_hex.slice(0, 12) }}…
             </div>
           </div>
           <button

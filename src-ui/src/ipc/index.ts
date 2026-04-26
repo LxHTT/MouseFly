@@ -82,6 +82,24 @@ export async function listPairedPeers(): Promise<PairedPeer[]> {
   return await invoke<PairedPeer[]>('list_paired_peers')
 }
 
+/// Pick the most-likely-routable address from an mDNS peer's address list.
+/// Prefers IPv4, then routable IPv6 (excludes link-local fe80::/10 — that
+/// needs a zone identifier we don't carry across the wire).
+export function pickPeerIp(addrs: string[]): string | null {
+  if (addrs.length === 0) return null
+  const v4 = addrs.find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a))
+  if (v4) return v4
+  const routable = addrs.find((a) => a.includes(':') && !a.toLowerCase().startsWith('fe80'))
+  if (routable) return routable
+  return addrs[0]
+}
+
+/// Combine an IP and port into a parseable host:port string. IPv6 needs
+/// square-bracket notation (`[fe80::1]:7878`), IPv4 doesn't.
+export function formatPeerAddr(ip: string, port: number): string {
+  return ip.includes(':') ? `[${ip}]:${port}` : `${ip}:${port}`
+}
+
 export async function getLocalIdentity(): Promise<LocalIdentity> {
   return await invoke<LocalIdentity>('get_local_identity')
 }

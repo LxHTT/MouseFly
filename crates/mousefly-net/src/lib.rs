@@ -101,10 +101,29 @@ impl Endpoint {
     /// Bind a client endpoint (ephemeral UDP port). Per-connection trust is
     /// set up at `connect()` time so the same endpoint can dial multiple peers
     /// with different pinning rules later.
+    ///
+    /// Defaults to IPv4. Use [`Endpoint::client_for`] when the target address
+    /// family is known (the bind family must match the peer's family on
+    /// macOS / Windows; IPv6-only sockets reject IPv4 destinations by default).
     pub fn client() -> Result<Self> {
+        Self::client_bind("0.0.0.0:0")
+    }
+
+    /// Bind a client endpoint matching `target`'s address family.
+    pub fn client_for(target: SocketAddr) -> Result<Self> {
+        let bind = match target {
+            SocketAddr::V4(_) => "0.0.0.0:0",
+            SocketAddr::V6(_) => "[::]:0",
+        };
+        Self::client_bind(bind)
+    }
+
+    fn client_bind(bind: &str) -> Result<Self> {
         install_default_crypto_provider();
-        let endpoint =
-            quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).context("quinn client bind")?;
+        let bind_addr: SocketAddr = bind
+            .parse()
+            .with_context(|| format!("parsing client bind addr {bind}"))?;
+        let endpoint = quinn::Endpoint::client(bind_addr).context("quinn client bind")?;
         Ok(Self {
             inner: endpoint,
             cert_der: None,
@@ -150,14 +169,17 @@ pub async fn pair_serve(endpoint: &Endpoint) -> Result<(quinn::SendStream, quinn
 
 /// Dial `addr` (no cert pinning — pairing is exactly when we don't yet know
 /// the peer's fingerprint) and open one bidirectional stream for the SPAKE2
-/// handshake.
-pub async fn pair_connect(
-    endpoint: &Endpoint,
-    addr: &str,
-) -> Result<(quinn::SendStream, quinn::RecvStream)> {
+/// handshake. Binds an ephemeral client endpoint matching the target's address
+/// family so v6 peers work without manual configuration.
+///
+/// `addr` accepts both IPv4 (`192.168.1.5:7878`) and IPv6 (`[fe80::1]:7878`)
+/// forms. Link-local IPv6 (`fe80::/10`) without a zone identifier won't route;
+/// callers should prefer routable addresses where mDNS gives both.
+pub async fn pair_connect(addr: &str) -> Result<(quinn::SendStream, quinn::RecvStream)> {
     let remote: SocketAddr = addr
         .parse()
         .with_context(|| format!("parsing pair peer addr {addr}"))?;
+    let endpoint = Endpoint::client_for(remote)?;
     let client_config = build_client_config(None)?;
     let connecting = endpoint
         .inner
@@ -188,13 +210,19 @@ pub async fn serve(addr: &str) -> Result<Link> {
 
 /// Convenience wrapper: dial `addr` from a fresh client endpoint, no pinning.
 pub async fn connect(addr: &str) -> Result<Link> {
-    let endpoint = Endpoint::client()?;
+    let parsed: SocketAddr = addr
+        .parse()
+        .with_context(|| format!("parsing peer addr {addr}"))?;
+    let endpoint = Endpoint::client_for(parsed)?;
     connect_on(&endpoint, addr, None).await
 }
 
 /// Connect with an expected SHA-256 leaf-cert fingerprint. Reject mismatches.
 pub async fn connect_pinned(addr: &str, expected_fingerprint: [u8; 32]) -> Result<Link> {
-    let endpoint = Endpoint::client()?;
+    let parsed: SocketAddr = addr
+        .parse()
+        .with_context(|| format!("parsing peer addr {addr}"))?;
+    let endpoint = Endpoint::client_for(parsed)?;
     connect_on(&endpoint, addr, Some(expected_fingerprint)).await
 }
 

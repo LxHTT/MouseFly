@@ -230,26 +230,21 @@ pub async fn start_pair_initiator(
     let fp = state.data_cert_fingerprint_hex.clone();
     let name = state.instance_name.clone();
 
-    // Use a fresh client endpoint for each initiator attempt — the data
-    // endpoint is for accepting; pairing as initiator opens a new conn.
-    let client_endpoint = Endpoint::client().map_err(|e| format!("client endpoint: {e:#}"))?;
-
     tokio::spawn(async move {
-        let outcome = run_initiator_flow(client_endpoint, addr, raw, identity, fp, name).await;
+        let outcome = run_initiator_flow(addr, raw, identity, fp, name).await;
         finish_pairing(app, store, outcome).await;
     });
     Ok(())
 }
 
 async fn run_initiator_flow(
-    endpoint: Endpoint,
     addr: String,
     code: String,
     identity: Arc<Identity>,
     fp: String,
     name: String,
 ) -> std::result::Result<mousefly_pair::PairingResult, mousefly_pair::PairingError> {
-    let (send, recv) = pair_connect(&endpoint, &addr)
+    let (send, recv) = pair_connect(&addr)
         .await
         .map_err(|e| mousefly_pair::PairingError::Framing(format!("connect: {e:#}")))?;
     run_initiator((recv, send), &code, &identity, &fp, &name).await
