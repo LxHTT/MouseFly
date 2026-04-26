@@ -1,11 +1,8 @@
-//! MouseFly Phase 0 spike.
+//! MouseFly app binary — Tauri shell + role wiring.
 //!
-//! Tauri-driven binary. Two roles, picked by CLI:
-//!   - sender:   `pnpm tauri dev -- -- --peer 192.168.x.y:7878`
-//!   - receiver: `pnpm tauri dev -- -- --listen 0.0.0.0:7878 [--inject]`
-//!
-//! (The double `--` is Tauri's convention: first separates the cargo args, the
-//! second separates our binary's args.)
+//! Roles:
+//!   - sender:   `pnpm dev -- -- --peer 192.168.x.y:7878`
+//!   - receiver: `pnpm dev -- -- --listen 0.0.0.0:7878 [--inject]`
 //!
 //! Loopback safety: `--inject` defaults off so running both roles on the same
 //! Mac (`--listen :7878` and `--peer 127.0.0.1:7878`) doesn't feedback-loop.
@@ -14,14 +11,18 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use mousefly_input::{install_kill_switch, InputBackend, Platform};
+use mousefly_core::{Frame, Monitor};
+use mousefly_input::{install_kill_switch, permissions_granted, InputBackend, Platform};
 use mousefly_net::{connect, serve, LinkHealth};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about = "MouseFly Phase 0 spike — Mac mouse forward over TCP")]
+#[command(
+    version,
+    about = "MouseFly — keyboard/mouse forwarding across Macs (Windows in flight)"
+)]
 struct Cli {
     /// Bind address for the receiver role, e.g. `0.0.0.0:7878`.
     #[arg(long, conflicts_with = "peer")]
@@ -59,6 +60,12 @@ struct LinkStatus {
     text: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct LayoutEvent {
+    side: &'static str,
+    monitors: Vec<Monitor>,
+}
+
 fn emit_status(app: &AppHandle, severity: &'static str, text: impl Into<String>) {
     let payload = LinkStatus {
         severity,
@@ -69,11 +76,22 @@ fn emit_status(app: &AppHandle, severity: &'static str, text: impl Into<String>)
     }
 }
 
+fn emit_layout(app: &AppHandle, side: &'static str, monitors: &[Monitor]) {
+    if let Err(e) = app.emit(
+        "layout",
+        &LayoutEvent {
+            side,
+            monitors: monitors.to_vec(),
+        },
+    ) {
+        warn!("emit layout failed: {e}");
+    }
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -90,18 +108,37 @@ fn main() -> Result<()> {
         (None, None) => return Err(anyhow!("must specify --listen or --peer")),
     };
 
-    install_kill_switch()?;
-    info!("kill switch installed (Ctrl+Cmd+Shift+Esc exits)");
+    // Phase 1 permissions preflight. macOS gates the event tap behind
+    // Accessibility; if it's missing we still bring up the network layer so
+    // users can see the GUI explain the problem. Capture / inject calls
+    // surface their own errors when they actually need the permission.
+    let perms_ok = permissions_granted();
+    if perms_ok {
+        if let Err(e) = install_kill_switch() {
+            warn!("kill switch install failed: {e:#}");
+        } else {
+            info!("kill switch installed (Ctrl+Cmd+Shift+Esc / Ctrl+Win+Shift+Esc exits)");
+        }
+    } else {
+        warn!("Accessibility permission missing — kill switch deferred until granted");
+    }
 
     let role_for_setup = role.clone();
     tauri::Builder::default()
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let role = role_for_setup.clone();
-            // Initial role broadcast so the webview can render before the link
-            // is up.
             if let Err(e) = app_handle.emit("role", &role) {
                 warn!("emit role failed: {e}");
+            }
+            if !perms_ok {
+                emit_status(
+                    &app_handle,
+                    "warn",
+                    "Accessibility / Input Monitoring permission missing. Grant both in \
+                     System Settings → Privacy & Security, then relaunch MouseFly. \
+                     Network link will still come up below.",
+                );
             }
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = run_role(role, app_handle.clone()).await {
@@ -124,15 +161,39 @@ async fn run_role(role: Role, app: AppHandle) -> Result<()> {
 
 async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
     let backend = Platform::new();
-    emit_status(&app, "info", "Requesting input capture (Accessibility + Input Monitoring may prompt)");
-    let capture = backend.start_capture()?;
-    info!("capture started; dialing peer {peer}");
+
+    // Publish our local monitor set to the GUI immediately — useful even
+    // before the link is up.
+    let monitors = backend.enumerate_monitors().unwrap_or_default();
+    emit_layout(&app, "local", &monitors);
+
     emit_status(&app, "info", format!("Connecting to {peer}…"));
     let mut link = connect(peer).await?;
-    info!("link up; forwarding pointer events");
-    emit_status(&app, "info", format!("Link up to {peer}"));
+    info!("link up; dialing capture");
+    emit_status(
+        &app,
+        "info",
+        "Link up — requesting input capture (may prompt for permissions)",
+    );
+    let capture = match backend.start_capture() {
+        Ok(c) => c,
+        Err(e) => {
+            emit_status(&app, "error", format!("Capture failed: {e:#}"));
+            return Err(e);
+        }
+    };
+    info!("forwarding events to {peer}");
+    emit_status(&app, "info", format!("Forwarding events to {peer}"));
 
-    spawn_health_emitter(app, link.health.clone(), "sender");
+    // Send our layout to the peer so they can render the global arrangement.
+    let _ = link
+        .outbound
+        .send(Frame::LayoutUpdate {
+            monitors: monitors.clone(),
+        })
+        .await;
+
+    spawn_health_emitter(app.clone(), link.health.clone(), "sender");
 
     let outbound = link.outbound.clone();
     tokio::task::spawn_blocking(move || {
@@ -143,25 +204,46 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
         }
     });
 
-    while link.inbound.recv().await.is_some() {}
+    while let Some(inbound) = link.inbound.recv().await {
+        match inbound.frame {
+            Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+            other => debug!(?other, "sender saw inbound frame (ignored)"),
+        }
+    }
     Ok(())
 }
 
 async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
     let backend = Platform::new();
+    let monitors = backend.enumerate_monitors().unwrap_or_default();
+    emit_layout(&app, "local", &monitors);
+
     info!("waiting for sender on {addr}");
     emit_status(&app, "info", format!("Listening on {addr} for sender…"));
     let mut link = serve(addr).await?;
-    info!(inject, "link up; receiving pointer events");
-    emit_status(&app, "info", format!("Sender connected; injection {}", if inject { "ON" } else { "off" }));
+    info!(inject, "link up; receiving events");
+    emit_status(
+        &app,
+        "info",
+        format!(
+            "Sender connected; injection {}",
+            if inject { "ON" } else { "off" }
+        ),
+    );
 
-    spawn_health_emitter(app, link.health.clone(), "receiver");
+    let _ = link.outbound.send(Frame::LayoutUpdate { monitors }).await;
+
+    spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
 
     while let Some(inbound) = link.inbound.recv().await {
-        if inject {
-            if let Err(e) = backend.inject(&inbound.frame) {
-                warn!("inject failed: {e:#}");
+        match inbound.frame {
+            Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+            ref f if inject => {
+                if let Err(e) = backend.inject(f) {
+                    warn!("inject failed: {e:#}");
+                }
             }
+            _ => {}
         }
     }
     Ok(())

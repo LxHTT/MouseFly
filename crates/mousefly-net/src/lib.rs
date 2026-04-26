@@ -268,9 +268,7 @@ impl SharedWriter {
     }
 }
 
-async fn read_wire_frame(
-    reader: &mut tokio::net::tcp::OwnedReadHalf,
-) -> Result<Option<WireFrame>> {
+async fn read_wire_frame(reader: &mut tokio::net::tcp::OwnedReadHalf) -> Result<Option<WireFrame>> {
     let mut len_buf = [0u8; 4];
     if let Err(e) = reader.read_exact(&mut len_buf).await {
         if e.kind() == std::io::ErrorKind::UnexpectedEof {

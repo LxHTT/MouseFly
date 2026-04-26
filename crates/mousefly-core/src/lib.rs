@@ -1,5 +1,5 @@
-//! Shared types for MouseFly: wire-protocol payloads and input bitmasks.
-//! Pure data, no I/O. Multi-monitor enumeration types arrive in Phase 1.
+//! Shared types for MouseFly: wire-protocol payloads, input bitmasks, and
+//! monitor descriptors. Pure data, no I/O.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,20 +16,53 @@ pub mod modifier {
     pub const SHIFT: u32 = 1 << 0;
     pub const CTRL: u32 = 1 << 1;
     pub const ALT: u32 = 1 << 2;
+    /// Cmd on macOS, Win on Windows, Super on Linux.
     pub const META: u32 = 1 << 3;
 }
 
-/// One unit of payload on the wire. The net layer wraps each in a `WireFrame`
+/// Stable identity of a monitor across reconnects. Preferred fill is the
+/// EDID hash (when available); fallback is `(connector, resolution, position)`
+/// hashed. The actual hashing happens in the per-OS input backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MonitorId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Monitor {
+    pub id: MonitorId,
+    pub name: String,
+    /// Logical pixels (points), as the OS reports them.
+    pub logical_size_px: (u32, u32),
+    /// OS-reported HiDPI scale (1.0, 2.0, ...).
+    pub scale_factor: f32,
+    /// Physical size from EDID, when available. None for monitors that don't
+    /// report it or report something implausible.
+    pub physical_size_mm: Option<(u32, u32)>,
+    /// Position in the host's local virtual desktop.
+    pub position_in_local_vd: (i32, i32),
+    pub primary: bool,
+}
+
+/// One unit of payload on the wire. The net layer wraps each in an envelope
 /// with a monotonic timestamp for latency measurement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Frame {
     /// Absolute pointer position in the sender's screen coordinates (points).
-    /// Phase 0 assumes both hosts share the same coordinate space.
+    /// Phase 0/1 assumes both hosts share the same coordinate space; Phase 3
+    /// switches to per-monitor mm-coordinates.
     PointerAbs { x: f32, y: f32, buttons: Buttons },
-    /// Mouse button state change. Carries the full button mask after the change.
+    /// Mouse button state. Carries the full button mask after the change.
     MouseButton { buttons: Buttons },
     /// Scroll wheel delta (points).
     Scroll { dx: f32, dy: f32 },
+    /// Physical key event. `code` is the OS-native scancode for now —
+    /// cross-OS HID translation lands in a later phase. `modifiers` is the
+    /// authoritative modifier mask AFTER the event (eliminates stuck-mod bugs
+    /// from a dropped key-up).
+    Key {
+        code: u32,
+        down: bool,
+        modifiers: Modifiers,
+    },
     /// Cheap keep-alive; doubles as an idle latency sample.
     Heartbeat,
     /// First leg of a 4-timestamp RTT probe. `t1_ns` is the sender's monotonic
@@ -37,5 +70,13 @@ pub enum Frame {
     RttProbe { id: u32, t1_ns: u64 },
     /// Reply to an `RttProbe`. `t2_ns` is the receiver's clock at receive time;
     /// `t3_ns` is the receiver's clock at reply send time.
-    RttReply { id: u32, t1_ns: u64, t2_ns: u64, t3_ns: u64 },
+    RttReply {
+        id: u32,
+        t1_ns: u64,
+        t2_ns: u64,
+        t3_ns: u64,
+    },
+    /// Sender publishes its monitor set so the receiver can render the layout
+    /// and reason about edge mappings. Sent on connect and on hot-plug.
+    LayoutUpdate { monitors: Vec<Monitor> },
 }

@@ -15,8 +15,18 @@ fail() { printf "${c_red}✘ %s${c_off}\n" "$*" >&2; exit 1; }
 step "Rust formatting (cargo fmt --check)"
 cargo fmt --all -- --check && ok "fmt clean"
 
-step "Rust lints (cargo clippy -D warnings)"
+step "Rust lints (cargo clippy -D warnings, host)"
 cargo clippy --workspace --all-targets -- -D warnings && ok "clippy clean"
+
+# Optional cross-target check: if the Windows target is installed, also lint
+# the Windows backend so we catch regressions before pushing to CI.
+if rustup target list --installed 2>/dev/null | grep -q '^x86_64-pc-windows-msvc$'; then
+  step "Rust lints (cargo clippy, target=x86_64-pc-windows-msvc)"
+  cargo clippy -p mousefly-input --target x86_64-pc-windows-msvc -- -D warnings && \
+    ok "clippy clean (windows-msvc cross-check)"
+else
+  printf "  (skipping windows-msvc cross-check; install with: rustup target add x86_64-pc-windows-msvc)\n"
+fi
 
 step "Rust tests (cargo test --workspace)"
 cargo test --workspace --quiet && ok "tests pass"
