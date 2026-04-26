@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import {
   hostBounds,
   hostOuterRect,
@@ -191,11 +192,31 @@ function onPointerUp(e: PointerEvent) {
   if (!d) return
   ;(e.currentTarget as Element).releasePointerCapture?.(d.pointerId)
   drag.value = null
+  pushLayoutToRust()
 }
 
 function onContextMenu(e: MouseEvent) {
   e.preventDefault()
   layout.resetOffsets()
+  pushLayoutToRust()
+}
+
+async function pushLayoutToRust() {
+  const local = layout.local
+  const remote = layout.remote
+  if (!local && !remote) return
+  try {
+    await invoke('update_layout', {
+      args: {
+        local_offset: local ? [local.offsetX, local.offsetY] : [0, 0],
+        remote_offset: remote ? [remote.offsetX, remote.offsetY] : [0, 0],
+      },
+    })
+  } catch (e) {
+    // It's fine if the command isn't registered (e.g. older binary); the
+    // Phase 0 absolute-pixel forwarding still works as a fallback.
+    console.debug('update_layout failed:', e)
+  }
 }
 
 function onKeyDown(e: KeyboardEvent) {

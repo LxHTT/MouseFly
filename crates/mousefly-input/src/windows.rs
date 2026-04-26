@@ -256,6 +256,12 @@ impl InputBackend for WinBackend {
                 };
                 send_key(ki)?;
             }
+            Frame::PointerOnMonitor { .. } => {
+                return Err(anyhow!(
+                    "Frame::PointerOnMonitor must be resolved to PointerAbs by the app layer \
+                     before injection"
+                ));
+            }
             Frame::Heartbeat
             | Frame::RttProbe { .. }
             | Frame::RttReply { .. }

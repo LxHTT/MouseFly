@@ -10,7 +10,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod clipboard;
+mod layout;
 mod pairing;
+
+use layout::{Side, SharedLayout};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -152,11 +155,14 @@ fn main() -> Result<()> {
 
     let role_for_setup = role.clone();
 
+    let global_layout = layout::make_shared();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .manage(global_layout.clone())
         .invoke_handler(tauri::generate_handler![
             pairing::start_pair_responder,
             pairing::start_pair_initiator,
@@ -166,6 +172,7 @@ fn main() -> Result<()> {
             set_autostart,
             get_lock_to_host,
             set_lock_to_host,
+            layout::update_layout,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
@@ -390,9 +397,10 @@ struct PairingStateSnapshot {
 }
 
 async fn run_role(role: Role, app: AppHandle) -> Result<()> {
+    let layout: SharedLayout = app.state::<SharedLayout>().inner().clone();
     match role {
-        Role::Sender { peer } => run_sender(&peer, app).await,
-        Role::Receiver { listen, inject } => run_receiver(&listen, inject, app).await,
+        Role::Sender { peer } => run_sender(&peer, app, layout).await,
+        Role::Receiver { listen, inject } => run_receiver(&listen, inject, app, layout).await,
     }
 }
 
@@ -412,10 +420,14 @@ fn set_lock_to_host(enable: bool, app: AppHandle) {
     let _ = app.emit("lock-to-host", &enable);
 }
 
-async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
+async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<()> {
     let backend = Platform::new();
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
+    {
+        let mut g = layout.write().await;
+        g.set_monitors(Side::Local, monitors.clone());
+    }
 
     let clipboard_mark = clipboard::make_watermark();
 
@@ -462,7 +474,9 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
 
                 let outbound = link.outbound.clone();
                 let mut cap_rx = cap_tx.subscribe();
+                let layout_for_pump = layout.clone();
                 let pump = tokio::spawn(async move {
+                    let mut last_cursor = (0f32, 0f32);
                     loop {
                         match cap_rx.recv().await {
                             Ok(frame) => {
@@ -476,8 +490,13 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
                                 {
                                     continue;
                                 }
-                                if outbound.send(frame).await.is_err() {
-                                    break;
+                                let gated =
+                                    layout::gate_outbound(frame, &layout_for_pump, &mut last_cursor)
+                                        .await;
+                                if let Some(frame) = gated {
+                                    if outbound.send(frame).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -488,7 +507,13 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
 
                 while let Some(inbound) = link.inbound.recv().await {
                     match inbound.frame {
-                        Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        Frame::LayoutUpdate { monitors } => {
+                            {
+                                let mut g = layout.write().await;
+                                g.set_monitors(Side::Remote, monitors.clone());
+                            }
+                            emit_layout(&app, "remote", &monitors);
+                        }
                         Frame::Clipboard { text } => {
                             clipboard::apply(text, &clipboard_mark).await;
                         }
@@ -510,10 +535,19 @@ async fn run_sender(peer: &str, app: AppHandle) -> Result<()> {
     }
 }
 
-async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
+async fn run_receiver(
+    addr: &str,
+    inject: bool,
+    app: AppHandle,
+    layout: SharedLayout,
+) -> Result<()> {
     let backend = Platform::new();
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
+    {
+        let mut g = layout.write().await;
+        g.set_monitors(Side::Local, monitors.clone());
+    }
 
     let clipboard_mark = clipboard::make_watermark();
 
@@ -542,9 +576,29 @@ async fn run_receiver(addr: &str, inject: bool, app: AppHandle) -> Result<()> {
 
                 while let Some(inbound) = link.inbound.recv().await {
                     match inbound.frame {
-                        Frame::LayoutUpdate { monitors } => emit_layout(&app, "remote", &monitors),
+                        Frame::LayoutUpdate { monitors } => {
+                            {
+                                let mut g = layout.write().await;
+                                g.set_monitors(Side::Remote, monitors.clone());
+                            }
+                            emit_layout(&app, "remote", &monitors);
+                        }
                         Frame::Clipboard { text } => {
                             clipboard::apply(text, &clipboard_mark).await;
+                        }
+                        Frame::PointerOnMonitor { .. } if inject => {
+                            // Resolve to local pixels using our own monitor list.
+                            let resolved = {
+                                let g = layout.read().await;
+                                g.pointer_on_monitor_to_local(&inbound.frame)
+                            };
+                            if let Some(frame) = resolved {
+                                if let Err(e) = backend.inject(&frame) {
+                                    warn!("inject (mapped) failed: {e:#}");
+                                }
+                            } else {
+                                warn!("PointerOnMonitor: no matching local monitor");
+                            }
                         }
                         ref f if inject => {
                             if let Err(e) = backend.inject(f) {

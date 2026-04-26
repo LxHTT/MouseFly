@@ -115,20 +115,18 @@ impl InputBackend for MacBackend {
             Frame::PointerAbs { x, y, buttons } => {
                 let source = new_source()?;
                 let pos = CGPoint::new(x as f64, y as f64);
-                *self.last_pos.lock().unwrap() = (pos.x, pos.y);
-                // macOS: while a button is held, MouseMoved is the wrong event
-                // type — must be the corresponding *Dragged so receiving apps
-                // see the drag.
-                let etype = if buttons & button::LEFT != 0 {
-                    CGEventType::LeftMouseDragged
-                } else if buttons & button::RIGHT != 0 {
-                    CGEventType::RightMouseDragged
-                } else {
-                    CGEventType::MouseMoved
-                };
-                let evt = CGEvent::new_mouse_event(source, etype, pos, CGMouseButton::Left)
-                    .map_err(|()| anyhow!("CGEvent::new_mouse_event failed"))?;
-                evt.post(CGEventTapLocation::HID);
+                inject_mouse_at(&source, pos, buttons, &mut self.last_pos.lock().unwrap())?;
+            }
+            // Phase 3.5: receiver-side resolution from PointerOnMonitor → pixel
+            // happens in mousefly-app (which has the local Monitor list it
+            // produced via enumerate_monitors). The input backend is simply
+            // told an absolute pixel; PointerAbs handles that. So we treat this
+            // variant as a programming error if it reaches inject().
+            Frame::PointerOnMonitor { .. } => {
+                return Err(anyhow!(
+                    "Frame::PointerOnMonitor must be resolved to PointerAbs by the app layer \
+                     before injection"
+                ));
             }
             Frame::MouseButton { buttons } => {
                 let source = new_source()?;
@@ -173,6 +171,28 @@ impl InputBackend for MacBackend {
 fn new_source() -> Result<CGEventSource> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|()| anyhow!("CGEventSource::new failed"))
+}
+
+fn inject_mouse_at(
+    source: &CGEventSource,
+    pos: CGPoint,
+    buttons: u32,
+    last_pos: &mut (f64, f64),
+) -> Result<()> {
+    *last_pos = (pos.x, pos.y);
+    // macOS: while a button is held, MouseMoved is the wrong event type —
+    // must be the corresponding *Dragged so receiving apps see the drag.
+    let etype = if buttons & button::LEFT != 0 {
+        CGEventType::LeftMouseDragged
+    } else if buttons & button::RIGHT != 0 {
+        CGEventType::RightMouseDragged
+    } else {
+        CGEventType::MouseMoved
+    };
+    let evt = CGEvent::new_mouse_event(source.clone(), etype, pos, CGMouseButton::Left)
+        .map_err(|()| anyhow!("CGEvent::new_mouse_event failed"))?;
+    evt.post(CGEventTapLocation::HID);
+    Ok(())
 }
 
 fn pixel_scale(d: &CGDisplay) -> f32 {

@@ -494,7 +494,10 @@ enum Class {
 
 fn transport_class(frame: &Frame) -> Class {
     match frame {
-        Frame::PointerAbs { .. } | Frame::Scroll { .. } | Frame::Heartbeat => Class::Datagram,
+        Frame::PointerAbs { .. }
+        | Frame::PointerOnMonitor { .. }
+        | Frame::Scroll { .. }
+        | Frame::Heartbeat => Class::Datagram,
         Frame::MouseButton { .. } | Frame::Key { .. } => Class::Input,
         Frame::LayoutUpdate { .. }
         | Frame::RttProbe { .. }
