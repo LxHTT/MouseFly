@@ -193,7 +193,10 @@ Bump `version` on any breaking change; old peers must refuse cleanly with a "ple
 | **3. Layout GUI** | Vue shell, drag-arrange monitor canvas, tray icon, autostart. Per-edge handoff math is the deferred 3.5 piece. | ✅ done (canvas + chrome) |
 | **4. Polish & v1 release** | Reconnection, lock-to-host hotkey, basic logs/diagnostics, installer per OS. | ✅ done (reconnect + lock); installer config still skipped (`bundle.active=false`) |
 | **5. v2** | Clipboard text sync (✅ done), Linux X11 (stub), then Wayland (deferred). | partial |
-| **3.5 / future** | Per-edge handoff math: sender's cursor crossing a mapped edge → mm-coords on receiver; ALPN-multiplexed pair+data on a single endpoint; full cross-OS HID keycode translation; EDID-hash monitor IDs. | not started |
+| **3.5** | Per-edge handoff math: sender's cursor crossing a mapped edge → mm-coords on receiver. | ✅ done |
+| **HID translation** | Cross-OS keycode mapping via HID Usage IDs. | ✅ done (ANSI subset; non-ANSI / IME / fn-row media still TBD) |
+| **Installers** | Tauri bundling configured, CI uploads. | ✅ done (unsigned) |
+| **Future / not started** | ALPN-multiplexed pair+data on a single endpoint (cleanup); EDID-hash monitor IDs; real Linux X11 + Wayland backends; code-signing certificates so unsigned-build warnings disappear. | not started |
 
 ## 10. Decisions log
 
@@ -217,7 +220,10 @@ Bump `version` on any breaking change; old peers must refuse cleanly with a "ple
 | 2026-04-26 | Phase 2 landed (commit 1a70250) | TCP→QUIC swap (datagrams for pointer deltas, streams for state), mDNS discovery, SPAKE2 + ed25519 pairing flow, Vue pairing UI. Pair endpoint and data link still use separate certs (Phase 3.5 unifies via ALPN). |
 | 2026-04-26 | Phase 3 landed (commit b2d056c) | Hand-rolled SVG monitor-arrangement canvas with snap-to-edge, system tray icon, autostart Tauri commands. Edge-handoff math (cursor mm-mapping → remote injection) deferred to Phase 3.5 — canvas exposes the geometry but cursor crossing still uses Phase 0's absolute pixel forwarding. |
 | 2026-04-26 | Phase 4 landed (commit 6b98ccb) | Sender reconnects with exponential backoff (broadcast bridge keeps capture across reconnects); receiver loops on serve(); lock-to-host static + Tauri commands so the GUI can pin input locally without dropping the link. |
-| 2026-04-27 | Phase 5 landed | Plain-text clipboard sync (arboard, 500 ms poll, watermark-based echo suppression). Linux X11 backend stays a stub — real `xtest` + `XInput2` impl is the next concrete piece of work. |
+| 2026-04-27 | Phase 5 landed (commit c2addc1) | Plain-text clipboard sync (arboard, 500 ms poll, watermark-based echo suppression). Linux X11 backend stays a stub — real `xtest` + `XInput2` impl is the next concrete piece of work. |
+| 2026-04-27 | Phase 3.5 landed (commit f81d417) | Edge-handoff math: sender's cursor crossing the user-arranged GVL boundary becomes `Frame::PointerOnMonitor { monitor, mm_x, mm_y, .. }`. Receiver maps mm back to local pixels using its own monitor's DPI / physical size. Vue canvas pushes offsets to Rust on drag-end via `update_layout`. Empty-layout fallback keeps the Phase 0 absolute-pixel path working. |
+| 2026-04-27 | HID keycode translation landed (commit 5deb79d) | `mousefly_core::keymap` static tables for ANSI letters/digits/F-row/arrows/modifiers. Capture translates OS-native → HID; inject does HID → OS-native. Cross-OS keyboard finally works without each side knowing the other's keycode space. |
+| 2026-04-27 | Tauri bundling enabled (commit f3f9c5d) | `bundle.active = true`, dmg+app on macOS, NSIS on Windows (currentUser install mode so it works without admin). CI uploads installers alongside raw binaries. Builds remain unsigned — Gatekeeper / SmartScreen warnings until certificates land. |
 
 ## 11. Open questions
 
