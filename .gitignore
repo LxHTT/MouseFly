@@ -2,7 +2,7 @@
 target/
 **/*.rs.bk
 
-# Node
+# Node / Bun
 node_modules/
 dist/
 .pnp.*
@@ -12,6 +12,9 @@ dist/
 !.yarn/plugins
 !.yarn/sdks
 !.yarn/versions
+
+# Turborepo
+.turbo/
 
 # Tauri
 **/gen/schemas

@@ -19,16 +19,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: "10"
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
+          bun-version: "1.3"
 
       - name: Set up Rust (stable + rustfmt + clippy)
         uses: dtolnay/rust-toolchain@stable
@@ -39,7 +33,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
@@ -50,8 +44,8 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-      - name: Build (Tauri, bundle disabled)
-        run: pnpm build
+      - name: Build (Tauri)
+        run: bun run build
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -71,16 +65,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: "10"
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
+          bun-version: "1.3"
 
       - name: Set up Rust (stable + rustfmt + clippy)
         uses: dtolnay/rust-toolchain@stable
@@ -92,11 +80,9 @@ jobs:
 
       # WebView2 Evergreen runtime is preinstalled on windows-latest (windows-2022
       # and windows-2025) GitHub-hosted images, so no manual install step is needed.
-      # If the runner image ever drops it, add the bootstrapper from
-      # https://developer.microsoft.com/microsoft-edge/webview2/ here.
 
       - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
@@ -107,8 +93,8 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-      - name: Build (Tauri, bundle disabled)
-        run: pnpm build
+      - name: Build (Tauri)
+        run: bun run build
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

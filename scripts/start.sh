@@ -5,7 +5,7 @@
 # Both windows show live link health from the same RTT probe.
 #
 # Loopback safety: --inject is intentionally OFF (cursor would feedback-loop).
-# Use `pnpm receiver:inject` on a real second machine for actual mouse forwarding.
+# Use `bun run receiver:inject` on a real second machine for actual mouse forwarding.
 #
 # Stop with Ctrl+C — child processes are cleaned up.
 
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> Building frontend dist (sender's standalone window needs it)"
-pnpm --filter mousefly-ui build
+bunx turbo run build --filter=mousefly-ui
 
 echo "==> Building release binary (sender)"
 cargo build --release -p mousefly-app
@@ -27,10 +27,10 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "==> Starting receiver (Tauri dev, listening on 0.0.0.0:7878)"
-pnpm receiver &
+bun run receiver &
 
 echo "==> Waiting for receiver to bind :7878"
-until lsof -nP -iTCP:7878 -sTCP:LISTEN >/dev/null 2>&1; do
+until lsof -nP -iUDP:7878 >/dev/null 2>&1; do
   sleep 1
 done
 sleep 2  # let Tauri finish opening its window before the sender's appears

@@ -35,10 +35,10 @@ step "Rust release build"
 cargo build --workspace --release --quiet && ok "release build"
 
 step "Frontend typecheck (vue-tsc)"
-pnpm --filter mousefly-ui typecheck && ok "typecheck clean"
+bunx turbo run typecheck --filter=mousefly-ui && ok "typecheck clean"
 
 step "Frontend build (vite)"
-pnpm --filter mousefly-ui build && ok "vite build"
+bunx turbo run build --filter=mousefly-ui && ok "vite build"
 
 step "Smoke: receiver binds UDP port (QUIC)"
 PORT=17878  # avoid colliding with the dev default 7878

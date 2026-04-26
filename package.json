@@ -2,16 +2,23 @@
   "name": "mousefly",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "bun@1.3.11",
+  "workspaces": ["src-ui"],
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev --config crates/mousefly-app/tauri.conf.json",
     "build": "tauri build --config crates/mousefly-app/tauri.conf.json",
     "start": "bash scripts/start.sh",
+    "test": "bash scripts/test.sh",
     "receiver": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --listen 0.0.0.0:7878",
     "receiver:inject": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --listen 0.0.0.0:7878 --inject",
-    "sender": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --peer 127.0.0.1:7878"
+    "sender": "tauri dev --config crates/mousefly-app/tauri.conf.json -- -- --peer 127.0.0.1:7878",
+    "ui:dev": "bunx turbo run dev --filter=mousefly-ui",
+    "ui:build": "bunx turbo run build --filter=mousefly-ui",
+    "ui:typecheck": "bunx turbo run typecheck --filter=mousefly-ui"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "turbo": "^2"
   }
 }

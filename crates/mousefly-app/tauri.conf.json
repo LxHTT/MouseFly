@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "io.mousefly.app",
   "build": {
-    "beforeDevCommand": "pnpm --filter mousefly-ui dev",
+    "beforeDevCommand": "bun run --filter=mousefly-ui dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --filter mousefly-ui build",
+    "beforeBuildCommand": "bun run --filter=mousefly-ui build",
     "frontendDist": "../../src-ui/dist"
   },
   "app": {
