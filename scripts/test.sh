@@ -40,36 +40,38 @@ pnpm --filter mousefly-ui typecheck && ok "typecheck clean"
 step "Frontend build (vite)"
 pnpm --filter mousefly-ui build && ok "vite build"
 
-step "Smoke: receiver binds TCP port"
+step "Smoke: receiver binds UDP port (QUIC)"
 PORT=17878  # avoid colliding with the dev default 7878
 LOG=$(mktemp)
 RUST_LOG=info ./target/release/mousefly --listen 127.0.0.1:$PORT >"$LOG" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; rm -f "$LOG"' EXIT
 
-# Wait up to ~5 s for the listener to come up.
+# Wait up to ~5 s for the QUIC listener to come up. Phase 2 swapped TCP
+# for QUIC, so check UDP instead.
 for _ in $(seq 1 25); do
-  if lsof -nP -iTCP:$PORT -sTCP:LISTEN -p $PID >/dev/null 2>&1; then
+  if lsof -nP -iUDP:$PORT -p $PID >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
 done
 
-if lsof -nP -iTCP:$PORT -sTCP:LISTEN -p $PID >/dev/null 2>&1; then
-  ok "receiver bound 127.0.0.1:$PORT (pid $PID)"
+if lsof -nP -iUDP:$PORT -p $PID >/dev/null 2>&1; then
+  ok "receiver bound UDP 127.0.0.1:$PORT (pid $PID)"
 else
   echo "--- receiver log ---" >&2
   cat "$LOG" >&2
   fail "receiver never bound :$PORT"
 fi
 
-step "Smoke: TCP handshake (sender → receiver)"
-# Quick TCP probe instead of running the full sender (which needs CGEventTap
-# permissions and would error before connecting in CI).
-if (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
-  ok "tcp connect succeeded"
+step "Smoke: log shows quic listening + identity loaded"
+sleep 1  # let the binary log a bit more
+if grep -q "quic listening" "$LOG" && grep -q "identity loaded" "$LOG"; then
+  ok "quic listening + identity loaded in log"
 else
-  fail "tcp connect to :$PORT failed"
+  echo "--- receiver log ---" >&2
+  cat "$LOG" >&2
+  fail "expected log lines missing"
 fi
 
 printf "\n${c_green}All local checks passed.${c_off}\n"

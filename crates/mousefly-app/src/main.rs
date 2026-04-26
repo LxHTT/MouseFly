@@ -9,14 +9,22 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod pairing;
+
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use mousefly_core::{Frame, Monitor};
+use mousefly_discovery::{AdvertiseConfig, Advertiser, Browser, DiscoveredPeer};
 use mousefly_input::{install_kill_switch, permissions_granted, InputBackend, Platform};
-use mousefly_net::{connect, serve, LinkHealth};
+use mousefly_net::{connect, serve, Endpoint, LinkHealth};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
+
+use pairing::PairingState;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -123,8 +131,28 @@ fn main() -> Result<()> {
         warn!("Accessibility permission missing — kill switch deferred until granted");
     }
 
+    // Identity + paired-peers store can be loaded sync; quinn endpoint creation
+    // requires a tokio runtime context (it spawns background tasks), so it's
+    // deferred to the Tauri setup callback below.
+    let identity =
+        pairing::load_or_create_identity().map_err(|e| anyhow!("identity init: {e:#}"))?;
+    let identity = Arc::new(identity);
+    let paired_peers =
+        pairing::load_paired_peers().map_err(|e| anyhow!("paired-peers init: {e:#}"))?;
+    let paired_peers = Arc::new(AsyncMutex::new(paired_peers));
+    let host_id_hex = identity.host_id_hex();
+    let instance_name = pairing::host_label();
+    info!(host_id = %host_id_hex, %instance_name, "identity loaded");
+
     let role_for_setup = role.clone();
+
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            pairing::start_pair_responder,
+            pairing::start_pair_initiator,
+            pairing::list_paired_peers,
+            pairing::cancel_pairing,
+        ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
             let role = role_for_setup.clone();
@@ -140,6 +168,48 @@ fn main() -> Result<()> {
                      Network link will still come up below.",
                 );
             }
+
+            // Bind the pair endpoint NOW that the tokio runtime is live.
+            // Failure here is non-fatal — pairing just won't work this run.
+            // quinn::Endpoint::server spawns background tokio tasks, so it has
+            // to run inside the runtime context (block_on does that for us).
+            let pair_result =
+                tauri::async_runtime::block_on(async { Endpoint::server("0.0.0.0:0") });
+            match pair_result {
+                Ok(pair_endpoint) => {
+                    let pair_port = match pair_endpoint.local_port() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("pair endpoint local_port: {e:#}");
+                            return Ok(());
+                        }
+                    };
+                    let pair_fp_hex = pairing::fingerprint_hex(pair_endpoint.cert_der());
+                    info!(pair_port, pair_fp = %pair_fp_hex, "pair endpoint up");
+
+                    let pairing_state = PairingState {
+                        identity: identity.clone(),
+                        instance_name: instance_name.clone(),
+                        data_cert_fingerprint_hex: pair_fp_hex.clone(),
+                        paired_peers: paired_peers.clone(),
+                        pending_code: Arc::new(AsyncMutex::new(None)),
+                        pair_endpoint: Arc::new(pair_endpoint),
+                    };
+                    app.manage(pairing_state);
+
+                    let advertise_cfg = AdvertiseConfig {
+                        instance_name: instance_name.clone(),
+                        port: pair_port,
+                        fingerprint_hex: pair_fp_hex.clone(),
+                        host_id_hex: host_id_hex.clone(),
+                    };
+                    spawn_pair_daemon(app_handle.clone(), advertise_cfg, pair_fp_hex);
+                }
+                Err(e) => {
+                    warn!("pair endpoint init failed (pairing disabled): {e:#}");
+                }
+            }
+
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = run_role(role, app_handle.clone()).await {
                     error!("role task exited: {e:#}");
@@ -150,6 +220,92 @@ fn main() -> Result<()> {
         })
         .run(tauri::generate_context!())
         .map_err(|e| anyhow!("tauri: {e}"))
+}
+
+/// Brings up mDNS advertising + browsing and the pair-acceptor task. Runs
+/// for the lifetime of the process; if any piece errors out, we log and the
+/// app keeps running with its data link role.
+fn spawn_pair_daemon(app: AppHandle, advertise: AdvertiseConfig, own_fp_hex: String) {
+    tauri::async_runtime::spawn(async move {
+        let _adv = match Advertiser::start(advertise) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                warn!("mdns advertise failed: {e:#}");
+                None
+            }
+        };
+        let browser = match Browser::start(own_fp_hex) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("mdns browse failed: {e:#}");
+                return;
+            }
+        };
+        let mut events = browser.events();
+
+        // Initial snapshot — usually empty at process start, but include for
+        // determinism.
+        let snap: Vec<DiscoveredPeer> = browser.snapshot();
+        if let Err(e) = app.emit("discovered-peers", &snap) {
+            warn!("emit discovered-peers (initial) failed: {e}");
+        }
+
+        let pair_state_clone = {
+            let pair_state: tauri::State<PairingState> = app.state();
+            PairingStateSnapshot {
+                pair_endpoint: pair_state.pair_endpoint.clone(),
+                paired_peers: pair_state.paired_peers.clone(),
+                identity: pair_state.identity.clone(),
+                instance_name: pair_state.instance_name.clone(),
+                data_cert_fingerprint_hex: pair_state.data_cert_fingerprint_hex.clone(),
+                pending_code: pair_state.pending_code.clone(),
+            }
+        };
+
+        // Pair acceptor.
+        let app_for_acc = app.clone();
+        tokio::spawn(async move {
+            pairing::run_pair_acceptor(
+                PairingState {
+                    identity: pair_state_clone.identity,
+                    instance_name: pair_state_clone.instance_name,
+                    data_cert_fingerprint_hex: pair_state_clone.data_cert_fingerprint_hex,
+                    paired_peers: pair_state_clone.paired_peers,
+                    pending_code: pair_state_clone.pending_code,
+                    pair_endpoint: pair_state_clone.pair_endpoint,
+                },
+                app_for_acc,
+            )
+            .await;
+        });
+
+        // Forward Browser events as updated snapshots — UI keeps a flat list.
+        let app_for_events = app.clone();
+        loop {
+            match events.recv().await {
+                Ok(_evt) => {
+                    let snap = browser.snapshot();
+                    if let Err(e) = app_for_events.emit("discovered-peers", &snap) {
+                        warn!("emit discovered-peers failed: {e}");
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(skipped = n, "discovered-peers receiver lagged");
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+#[derive(Clone)]
+struct PairingStateSnapshot {
+    pair_endpoint: Arc<Endpoint>,
+    paired_peers: Arc<AsyncMutex<mousefly_pair::PairedPeerStore>>,
+    identity: Arc<mousefly_pair::Identity>,
+    instance_name: String,
+    data_cert_fingerprint_hex: String,
+    pending_code: Arc<AsyncMutex<Option<String>>>,
 }
 
 async fn run_role(role: Role, app: AppHandle) -> Result<()> {

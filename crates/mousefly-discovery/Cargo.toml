@@ -1,5 +1,5 @@
 [package]
-name = "mousefly-net"
+name = "mousefly-discovery"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,14 +7,11 @@ authors.workspace = true
 
 [dependencies]
 mousefly-core = { workspace = true }
-tokio = { workspace = true }
+mdns-sd = { workspace = true }
 serde = { workspace = true }
-bincode = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-quinn = { workspace = true }
-rustls = { workspace = true }
-rcgen = { workspace = true }
-rand = { workspace = true }
-sha2 = { workspace = true }
+hex = { workspace = true }
+flume = { version = "0.11", default-features = false }

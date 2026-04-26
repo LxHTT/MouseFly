@@ -1,4 +1,6 @@
+import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { DiscoveredPeer, PairedPeer } from '../stores/pairing'
 
 // Wire-format-matched payloads. Keep in sync with crates/mousefly-app/src/main.rs.
 
@@ -31,4 +33,53 @@ export function listenLinkHealth(cb: (h: LinkHealthEvent) => void): Promise<Unli
 
 export function listenLinkStatus(cb: (s: LinkStatusEvent) => void): Promise<UnlistenFn> {
   return listen<LinkStatusEvent>('link-status', (e) => cb(e.payload))
+}
+
+// --- Pairing IPC -----------------------------------------------------------
+
+export interface PairingCodeEvent {
+  code: string
+}
+
+export interface PairingResultEvent {
+  ok: boolean
+  peer?: PairedPeer
+  reason?: string
+}
+
+export function listenDiscoveredPeers(
+  cb: (peers: DiscoveredPeer[]) => void,
+): Promise<UnlistenFn> {
+  return listen<DiscoveredPeer[]>('discovered-peers', (e) => cb(e.payload))
+}
+
+export function listenPairingCode(
+  cb: (e: PairingCodeEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PairingCodeEvent>('pairing-code', (e) => cb(e.payload))
+}
+
+export function listenPairingResult(
+  cb: (e: PairingResultEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PairingResultEvent>('pairing-result', (e) => cb(e.payload))
+}
+
+export async function listPairedPeers(): Promise<PairedPeer[]> {
+  return await invoke<PairedPeer[]>('list_paired_peers')
+}
+
+export async function startPairResponder(): Promise<string> {
+  return await invoke<string>('start_pair_responder')
+}
+
+export async function startPairInitiator(
+  addr: string,
+  code: string,
+): Promise<void> {
+  await invoke('start_pair_initiator', { addr, code })
+}
+
+export async function cancelPairing(): Promise<void> {
+  await invoke('cancel_pairing')
 }

@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 mousefly-core = { workspace = true }
 mousefly-input = { workspace = true }
 mousefly-net = { workspace = true }
+mousefly-discovery = { workspace = true }
+mousefly-pair = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -23,4 +25,6 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = "1"
+hex = { workspace = true }
+hostname = "0.4"
 tauri = { version = "2", features = [] }
