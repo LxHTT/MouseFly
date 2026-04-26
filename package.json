@@ -1,0 +1,13 @@
+{
+  "name": "mousefly",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev --config crates/mousefly-app/tauri.conf.json",
+    "build": "tauri build --config crates/mousefly-app/tauri.conf.json"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
