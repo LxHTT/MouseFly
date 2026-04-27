@@ -901,6 +901,8 @@ mod tests {
             .send(Frame::PointerAbs {
                 x: 1.0,
                 y: 2.0,
+                dx: 0.5,
+                dy: 0.5,
                 buttons: 0,
             })
             .await
