@@ -661,9 +661,11 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                 let outbound = link.outbound.clone();
                 let mut cap_rx = cap_tx.subscribe();
                 let layout_for_pump = layout.clone();
+                let app_for_pump = app.clone();
                 let pump = tokio::spawn(async move {
                     let mut last_cursor = (0f32, 0f32);
                     let mut edge = layout::EdgeState::default();
+                    let mut was_on_remote = false;
                     loop {
                         match cap_rx.recv().await {
                             Ok(frame) => {
@@ -684,6 +686,15 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                                     &mut edge,
                                 )
                                 .await;
+                                if edge.on_remote != was_on_remote {
+                                    was_on_remote = edge.on_remote;
+                                    let msg = if edge.on_remote {
+                                        "Edge crossing: cursor entered remote"
+                                    } else {
+                                        "Edge crossing: cursor returned to local"
+                                    };
+                                    emit_log(&app_for_pump, "info", msg);
+                                }
                                 if let Some(frame) = gated {
                                     if outbound.send(frame).await.is_err() {
                                         break;
@@ -699,11 +710,20 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                 while let Some(inbound) = link.inbound.recv().await {
                     match inbound.frame {
                         Frame::LayoutUpdate { monitors } => {
+                            info!(
+                                count = monitors.len(),
+                                "sender received remote LayoutUpdate"
+                            );
                             {
                                 let mut g = layout.write().await;
                                 g.set_monitors(Side::Remote, monitors.clone());
                             }
                             emit_layout(&app, "remote", &monitors);
+                            emit_log(
+                                &app,
+                                "info",
+                                format!("Remote layout: {} monitor(s)", monitors.len()),
+                            );
                         }
                         Frame::Clipboard { text } => {
                             clipboard::apply(text, &clipboard_mark).await;
@@ -780,8 +800,18 @@ async fn run_receiver(
                         Frame::Clipboard { text } => {
                             clipboard::apply(text, &clipboard_mark).await;
                         }
-                        Frame::PointerOnMonitor { .. } if inject => {
-                            // Resolve to local pixels using our own monitor list.
+                        Frame::PointerOnMonitor {
+                            monitor,
+                            mm_x,
+                            mm_y,
+                            ..
+                        } if inject => {
+                            static POM_COUNT: std::sync::atomic::AtomicU32 =
+                                std::sync::atomic::AtomicU32::new(0);
+                            let c = POM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if c < 3 {
+                                info!(?monitor, mm_x, mm_y, "receiver got PointerOnMonitor");
+                            }
                             let resolved = {
                                 let g = layout.read().await;
                                 g.pointer_on_monitor_to_local(&inbound.frame)

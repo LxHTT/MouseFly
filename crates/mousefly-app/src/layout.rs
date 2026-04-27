@@ -18,7 +18,7 @@ use mousefly_core::{Frame, Monitor, MonitorId};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::info;
 
 const DEFAULT_MM_PER_PX: f32 = 25.4 / 96.0;
 
@@ -308,6 +308,20 @@ pub async fn gate_outbound(
     let (l_min_x, l_min_y, l_max_x, l_max_y) = local_bounds;
     let edge_margin = 2.0;
 
+    // One-shot diagnostic: log the first pointer event so we can verify the
+    // coordinate spaces are sane.
+    static LOGGED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !LOGGED_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        info!(
+            new_x, new_y, dx, dy,
+            local_offset = ?g.local.offset,
+            remote_offset = ?g.remote.offset,
+            local_bounds = ?(l_min_x, l_min_y, l_max_x, l_max_y),
+            remote_bounds = ?(remote_gvl.0, remote_gvl.1, remote_gvl.2, remote_gvl.3),
+            "gate_outbound first pointer event"
+        );
+    }
+
     if edge.on_remote {
         edge.virt_gvl_x += dx;
         edge.virt_gvl_y += dy;
@@ -365,6 +379,17 @@ pub async fn gate_outbound(
     let at_bottom = new_y >= l_max_y - edge_margin;
     let at_top = new_y <= l_min_y + edge_margin;
 
+    if at_right || at_left || at_bottom || at_top {
+        static EDGE_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let count = EDGE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count < 5 {
+            info!(
+                new_x,
+                new_y, dx, dy, at_right, at_left, at_bottom, at_top, "cursor at local screen edge"
+            );
+        }
+    }
+
     let local_gvl_max_x = g.local.offset.0 + l_max_x;
     let local_gvl_min_x = g.local.offset.0 + l_min_x;
     let local_gvl_max_y = g.local.offset.1 + l_max_y;
@@ -407,7 +432,7 @@ pub async fn gate_outbound(
         edge.on_remote = true;
         edge.virt_gvl_x = gvl_x;
         edge.virt_gvl_y = gvl_y;
-        debug!(gvl_x, gvl_y, "edge crossing → entered remote");
+        info!(gvl_x, gvl_y, "edge crossing → entered remote");
         if let Some((monitor, mm_x, mm_y)) = g.gvl_to_remote_mm(gvl_x, gvl_y) {
             return Some(Frame::PointerOnMonitor {
                 monitor,
@@ -416,7 +441,95 @@ pub async fn gate_outbound(
                 buttons,
             });
         }
+        info!("edge crossing: entered remote but gvl_to_remote_mm returned None");
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mousefly_core::{Monitor, MonitorId};
+
+    fn make_monitor(id: u64, w: u32, h: u32, pos: (i32, i32)) -> Monitor {
+        Monitor {
+            id: MonitorId(id),
+            name: format!("Test-{id}"),
+            logical_size_px: (w, h),
+            scale_factor: 2.0,
+            physical_size_mm: Some((600, 340)),
+            position_in_local_vd: pos,
+            primary: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn edge_crossing_right() {
+        let layout = make_shared();
+        {
+            let mut g = layout.write().await;
+            g.set_monitors(Side::Local, vec![make_monitor(1, 1920, 1080, (0, 0))]);
+            g.set_monitors(Side::Remote, vec![make_monitor(2, 1440, 900, (0, 0))]);
+        }
+        // After auto-arrange, remote.offset should be (1920, 0).
+        {
+            let g = layout.read().await;
+            assert_eq!(g.remote.offset, (1920.0, 0.0));
+        }
+
+        let mut last = (0f32, 0f32);
+        let mut edge = EdgeState::default();
+
+        // Cursor in the middle — should NOT forward.
+        let frame = Frame::PointerAbs {
+            x: 500.0,
+            y: 400.0,
+            dx: 1.0,
+            dy: 0.0,
+            buttons: 0,
+        };
+        let result = gate_outbound(frame, &layout, &mut last, &mut edge).await;
+        assert!(result.is_none(), "mid-screen should not forward");
+        assert!(!edge.on_remote);
+
+        // Cursor at right edge — should trigger crossing.
+        let frame = Frame::PointerAbs {
+            x: 1919.0,
+            y: 400.0,
+            dx: 5.0,
+            dy: 0.0,
+            buttons: 0,
+        };
+        let result = gate_outbound(frame, &layout, &mut last, &mut edge).await;
+        assert!(edge.on_remote, "should enter remote mode at right edge");
+        assert!(result.is_some(), "should produce PointerOnMonitor");
+        match result.unwrap() {
+            Frame::PointerOnMonitor { monitor, .. } => {
+                assert_eq!(monitor, MonitorId(2));
+            }
+            other => panic!("expected PointerOnMonitor, got {other:?}"),
+        }
+
+        // Continue moving right while on remote — should keep forwarding.
+        let frame = Frame::PointerAbs {
+            x: 1919.0,
+            y: 400.0,
+            dx: 10.0,
+            dy: 0.0,
+            buttons: 0,
+        };
+        let result = gate_outbound(frame, &layout, &mut last, &mut edge).await;
+        assert!(edge.on_remote);
+        assert!(result.is_some());
+
+        // Key while on remote — should forward.
+        let frame = Frame::Key {
+            code: 42,
+            down: true,
+            modifiers: 0,
+        };
+        let result = gate_outbound(frame, &layout, &mut last, &mut edge).await;
+        assert!(result.is_some(), "key should forward while on remote");
+    }
 }
