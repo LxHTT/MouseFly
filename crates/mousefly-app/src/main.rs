@@ -147,14 +147,38 @@ struct LayoutEvent {
     monitors: Vec<Monitor>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct LogEntry {
+    level: &'static str,
+    message: String,
+}
+
 fn emit_status(app: &AppHandle, severity: &'static str, text: impl Into<String>) {
-    let payload = LinkStatus {
-        severity,
-        text: text.into(),
-    };
-    if let Err(e) = app.emit("link-status", &payload) {
-        warn!("emit link-status failed: {e}");
-    }
+    let text = text.into();
+    let _ = app.emit(
+        "link-status",
+        &LinkStatus {
+            severity,
+            text: text.clone(),
+        },
+    );
+    let _ = app.emit(
+        "log-entry",
+        &LogEntry {
+            level: severity,
+            message: text,
+        },
+    );
+}
+
+fn emit_log(app: &AppHandle, level: &'static str, message: impl Into<String>) {
+    let _ = app.emit(
+        "log-entry",
+        &LogEntry {
+            level,
+            message: message.into(),
+        },
+    );
 }
 
 fn emit_layout(app: &AppHandle, side: &'static str, monitors: &[Monitor]) {
@@ -262,6 +286,11 @@ fn main() -> Result<()> {
             if let Err(e) = install_tray(app) {
                 warn!("tray icon install failed: {e:#}");
             }
+            emit_log(
+                &app_handle,
+                "info",
+                format!("identity loaded: {instance_name} ({host_id_hex})"),
+            );
             if !perms_ok {
                 emit_status(
                     &app_handle,
@@ -614,8 +643,10 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
         match connect(peer).await {
             Ok(mut link) => {
                 attempt = 0;
-                info!("forwarding events to {peer}");
-                emit_status(&app, "info", format!("Forwarding events to {peer}"));
+                let actual_peer = link.remote_addr.to_string();
+                info!("forwarding events to {actual_peer}");
+                emit_status(&app, "info", format!("Forwarding events to {actual_peer}"));
+                let _ = app.emit("peer-addr", &actual_peer);
 
                 let _ = link
                     .outbound
@@ -682,6 +713,7 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                 }
                 pump.abort();
                 emit_status(&app, "warn", "Link dropped — reconnecting…");
+                let _ = app.emit("link-dropped", &());
             }
             Err(e) => {
                 emit_status(&app, "warn", format!("Connect failed: {e:#} — retrying"));
@@ -716,15 +748,17 @@ async fn run_receiver(
         emit_status(&app, "info", format!("Listening on {addr} for sender…"));
         match serve(addr).await {
             Ok(mut link) => {
-                info!(inject, "link up; receiving events");
+                let actual_peer = link.remote_addr.to_string();
+                info!(inject, peer = %actual_peer, "link up; receiving events");
                 emit_status(
                     &app,
                     "info",
                     format!(
-                        "Sender connected; injection {}",
+                        "Sender {actual_peer} connected; injection {}",
                         if inject { "ON" } else { "off" }
                     ),
                 );
+                let _ = app.emit("peer-addr", &actual_peer);
                 let _ = link
                     .outbound
                     .send(Frame::LayoutUpdate {
@@ -769,6 +803,7 @@ async fn run_receiver(
                     }
                 }
                 emit_status(&app, "warn", "Sender disconnected — waiting for next");
+                let _ = app.emit("link-dropped", &());
             }
             Err(e) => {
                 emit_status(&app, "warn", format!("Listen failed: {e:#} — retrying"));

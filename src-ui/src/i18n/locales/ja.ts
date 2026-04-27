@@ -1,6 +1,6 @@
 export default {
   app: {
-    tabs: { session: 'セッション', layout: 'レイアウト' },
+    tabs: { session: 'セッション', layout: 'レイアウト', log: 'ログ' },
     permissions: {
       title: '権限が必要です',
       description:
@@ -101,5 +101,9 @@ export default {
     waitingRemote: 'リモートのレイアウトを待機中……',
     fit: 'フィット',
     primaryBadge: 'メイン',
+  },
+  log: {
+    clear: 'クリア',
+    empty: 'ログはまだありません。',
   },
 }

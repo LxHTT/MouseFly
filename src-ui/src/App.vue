@@ -4,12 +4,16 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
 import { useLayoutStore, type CanvasMonitor } from './stores/layout'
+import { useLogStore } from './stores/log'
 import {
   checkPermissions,
   currentRole,
   listenLayout,
+  listenLinkDropped,
   listenLinkHealth,
   listenLinkStatus,
+  listenLogEntry,
+  listenPeerAddr,
   listenRole,
   monitorIdToString,
   requestPermissions,
@@ -19,11 +23,13 @@ import { LOCALES, setLocale, type Locale } from './i18n'
 import { useI18n } from 'vue-i18n'
 import SessionView from './views/SessionView.vue'
 import LayoutView from './views/LayoutView.vue'
+import LogView from './views/LogView.vue'
 
-type Tab = 'session' | 'layout'
+type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
 const link = useLinkStore()
 const layoutStore = useLayoutStore()
+const logStore = useLogStore()
 const { t, locale } = useI18n()
 const currentLocale = computed({
   get: () => locale.value as Locale,
@@ -36,6 +42,9 @@ let unlistenRole: UnlistenFn | null = null
 let unlistenHealth: UnlistenFn | null = null
 let unlistenStatus: UnlistenFn | null = null
 let unlistenLayout: UnlistenFn | null = null
+let unlistenDropped: UnlistenFn | null = null
+let unlistenPeerAddr: UnlistenFn | null = null
+let unlistenLogEntry: UnlistenFn | null = null
 
 function mapMonitor(m: WireMonitor): CanvasMonitor {
   const [w, h] = m.logical_size_px
@@ -60,6 +69,7 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
 const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
   session: { width: 560, minHeight: 820 },
   layout: { width: 780, minHeight: 720 },
+  log: { width: 560, minHeight: 720 },
 }
 const OUTER_PADDING = 40 // main.p-5 × 2 sides
 const ANIM_DURATION_MS = 220
@@ -188,10 +198,21 @@ onMounted(async () => {
       })
       if (wasNew) layoutStore.resetOffsets()
     } catch (err) {
-      // Don't let a malformed monitor frame silently kill the listener — log
-      // so it surfaces in `bun tauri dev`/devtools.
       console.error('layout event handling failed', err, e)
     }
+  })
+  unlistenDropped = await listenLinkDropped(() => {
+    link.role = 'idle'
+    link.p50us = 0
+    link.p99us = 0
+    link.eps = 0
+    link.offsetNs = 0
+  })
+  unlistenPeerAddr = await listenPeerAddr((addr) => {
+    link.peer = addr
+  })
+  unlistenLogEntry = await listenLogEntry((e) => {
+    logStore.push({ ts: Date.now(), level: e.level as any, message: e.message })
   })
 })
 
@@ -200,6 +221,9 @@ onBeforeUnmount(() => {
   unlistenHealth?.()
   unlistenStatus?.()
   unlistenLayout?.()
+  unlistenDropped?.()
+  unlistenPeerAddr?.()
+  unlistenLogEntry?.()
   resizeObserver?.disconnect()
 })
 
@@ -259,6 +283,9 @@ const linkDot = computed(() => {
             <button :class="tabClass('layout').value" @click="tab = 'layout'">
               {{ t('app.tabs.layout') }}
             </button>
+            <button :class="tabClass('log').value" @click="tab = 'log'">
+              {{ t('app.tabs.log') }}
+            </button>
           </nav>
         </div>
       </header>
@@ -313,7 +340,8 @@ const linkDot = computed(() => {
       >
         <KeepAlive>
           <SessionView v-if="tab === 'session'" />
-          <LayoutView v-else />
+          <LayoutView v-else-if="tab === 'layout'" />
+          <LogView v-else />
         </KeepAlive>
       </Transition>
     </div>

@@ -1,6 +1,6 @@
 export default {
   app: {
-    tabs: { session: '工作階段', layout: '佈局' },
+    tabs: { session: '工作階段', layout: '佈局', log: '日誌' },
     permissions: {
       title: '需要權限',
       description:
@@ -101,5 +101,9 @@ export default {
     waitingRemote: '等待對端佈局……',
     fit: '適應',
     primaryBadge: '主畫面',
+  },
+  log: {
+    clear: '清除',
+    empty: '暫時冇日誌。',
   },
 }

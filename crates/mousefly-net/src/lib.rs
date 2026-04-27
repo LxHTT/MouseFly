@@ -73,6 +73,7 @@ pub struct Link {
     pub outbound: mpsc::Sender<Frame>,
     pub inbound: mpsc::Receiver<InboundFrame>,
     pub health: watch::Receiver<LinkHealth>,
+    pub remote_addr: std::net::SocketAddr,
 }
 
 /// Wrapper around a `quinn::Endpoint`, holding the optional self-signed cert
@@ -436,10 +437,13 @@ fn spawn_link(
         });
     }
 
+    let remote_addr = conn.remote_address();
+
     Link {
         outbound: outbound_tx,
         inbound: inbound_rx,
         health: health_rx,
+        remote_addr,
     }
 }
 

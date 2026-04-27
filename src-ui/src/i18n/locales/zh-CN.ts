@@ -1,6 +1,6 @@
 export default {
   app: {
-    tabs: { session: '会话', layout: '布局' },
+    tabs: { session: '会话', layout: '布局', log: '日志' },
     permissions: {
       title: '需要权限',
       description:
@@ -101,5 +101,9 @@ export default {
     waitingRemote: '等待对端布局……',
     fit: '适应',
     primaryBadge: '主屏',
+  },
+  log: {
+    clear: '清除',
+    empty: '暂无日志。',
   },
 }

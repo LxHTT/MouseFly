@@ -18,6 +18,7 @@ use mousefly_core::{Frame, Monitor, MonitorId};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
+use tracing::{debug, info};
 
 const DEFAULT_MM_PER_PX: f32 = 25.4 / 96.0;
 
@@ -54,6 +55,11 @@ pub async fn update_layout(
     let mut g = shared.write().await;
     g.local.offset = args.local_offset;
     g.remote.offset = args.remote_offset;
+    info!(
+        local_offset = ?args.local_offset,
+        remote_offset = ?args.remote_offset,
+        "layout offsets updated from Vue"
+    );
     Ok(())
 }
 
@@ -66,6 +72,31 @@ impl GlobalLayout {
             Side::Local => self.local.monitors = monitors,
             Side::Remote => self.remote.monitors = monitors,
         }
+        self.auto_arrange_if_needed();
+    }
+
+    /// When both sides have monitors but offsets are still at the default
+    /// (0,0)/(0,0), place remote flush to the right of local so edge-crossing
+    /// works out of the box without waiting for the Vue canvas push.
+    fn auto_arrange_if_needed(&mut self) {
+        if self.local.monitors.is_empty() || self.remote.monitors.is_empty() {
+            return;
+        }
+        if self.local.offset != (0.0, 0.0) || self.remote.offset != (0.0, 0.0) {
+            return;
+        }
+        let mut max_x: f32 = 0.0;
+        for m in &self.local.monitors {
+            let right = m.position_in_local_vd.0 as f32 + m.logical_size_px.0 as f32;
+            if right > max_x {
+                max_x = right;
+            }
+        }
+        self.remote.offset = (max_x, 0.0);
+        info!(
+            remote_offset = ?self.remote.offset,
+            "auto-arranged remote to right of local"
+        );
     }
 
     /// Translate a sender-local pointer position (LVD pixels) into GVL.
@@ -376,6 +407,7 @@ pub async fn gate_outbound(
         edge.on_remote = true;
         edge.virt_gvl_x = gvl_x;
         edge.virt_gvl_y = gvl_y;
+        debug!(gvl_x, gvl_y, "edge crossing → entered remote");
         if let Some((monitor, mm_x, mm_y)) = g.gvl_to_remote_mm(gvl_x, gvl_y) {
             return Some(Frame::PointerOnMonitor {
                 monitor,

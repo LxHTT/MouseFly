@@ -98,6 +98,15 @@ watch(useCustomCode, (v) => {
   customCodeError.value = ''
 })
 
+watch(
+  () => link.role,
+  (role) => {
+    if (role === 'idle' && status.value.kind === 'linked') {
+      status.value = { kind: 'idle' }
+    }
+  },
+)
+
 function validateCustomCode(): boolean {
   const c = customCode.value.trim()
   if (c.length < 6) {

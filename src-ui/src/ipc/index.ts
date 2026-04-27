@@ -36,6 +36,23 @@ export function listenLinkStatus(cb: (s: LinkStatusEvent) => void): Promise<Unli
   return listen<LinkStatusEvent>('link-status', (e) => cb(e.payload))
 }
 
+export function listenLinkDropped(cb: () => void): Promise<UnlistenFn> {
+  return listen('link-dropped', () => cb())
+}
+
+export function listenPeerAddr(cb: (addr: string) => void): Promise<UnlistenFn> {
+  return listen<string>('peer-addr', (e) => cb(e.payload))
+}
+
+export interface LogEntryEvent {
+  level: string
+  message: string
+}
+
+export function listenLogEntry(cb: (e: LogEntryEvent) => void): Promise<UnlistenFn> {
+  return listen<LogEntryEvent>('log-entry', (e) => cb(e.payload))
+}
+
 // --- Pairing IPC -----------------------------------------------------------
 
 export interface PairingCodeEvent {

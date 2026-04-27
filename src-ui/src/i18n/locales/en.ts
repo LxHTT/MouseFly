@@ -1,6 +1,6 @@
 export default {
   app: {
-    tabs: { session: 'Session', layout: 'Layout' },
+    tabs: { session: 'Session', layout: 'Layout', log: 'Log' },
     permissions: {
       title: 'Permissions required',
       description:
@@ -101,5 +101,9 @@ export default {
     waitingRemote: 'Waiting for remote layout…',
     fit: 'Fit',
     primaryBadge: 'PRI',
+  },
+  log: {
+    clear: 'Clear',
+    empty: 'No log entries yet.',
   },
 }

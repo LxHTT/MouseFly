@@ -1,6 +1,6 @@
 export default {
   app: {
-    tabs: { session: 'Сессия', layout: 'Раскладка' },
+    tabs: { session: 'Сессия', layout: 'Раскладка', log: 'Журнал' },
     permissions: {
       title: 'Требуются разрешения',
       description:
@@ -101,5 +101,9 @@ export default {
     waitingRemote: 'Ожидание удалённой раскладки…',
     fit: 'По размеру',
     primaryBadge: 'ОСН',
+  },
+  log: {
+    clear: 'Очистить',
+    empty: 'Записей пока нет.',
   },
 }
