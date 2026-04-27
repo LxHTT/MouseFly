@@ -5,12 +5,14 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
 import { useLayoutStore, type CanvasMonitor } from './stores/layout'
 import {
+  checkPermissions,
   currentRole,
   listenLayout,
   listenLinkHealth,
   listenLinkStatus,
   listenRole,
   monitorIdToString,
+  requestPermissions,
   type WireMonitor,
 } from './ipc'
 import { LOCALES, setLocale, type Locale } from './i18n'
@@ -27,6 +29,8 @@ const currentLocale = computed({
   get: () => locale.value as Locale,
   set: (v: Locale) => setLocale(v),
 })
+const permsOk = ref(true)
+const permsChecking = ref(false)
 let unlistenRole: UnlistenFn | null = null
 let unlistenHealth: UnlistenFn | null = null
 let unlistenStatus: UnlistenFn | null = null
@@ -50,9 +54,8 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   }
 }
 
-// Per-tab width + content-driven height with a per-tab minimum, animated
-// over ~220ms with cubic ease-out. The layout canvas needs horizontal room;
-// link/pair pick a comfortable minimum so the inner cards don't crush.
+// Per-tab width. Session tab auto-fits height via ResizeObserver; Layout
+// tab sets height once on entry then allows manual resize.
 const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
   session: { width: 560, minHeight: 820 },
   layout: { width: 780, minHeight: 720 },
@@ -65,6 +68,9 @@ let currentSize = { width: 0, height: 0 }
 let firstResize = true
 let animFrame: number | null = null
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
+// When true, ResizeObserver drives the window height (session tab).
+// When false, the window was sized once and the user can resize freely (layout tab).
+let autoResizeEnabled = true
 
 async function setWindow(w: number, h: number) {
   currentSize = { width: w, height: h }
@@ -102,18 +108,26 @@ function animateToSize(targetW: number, targetH: number) {
 }
 
 function fitWindowToContent() {
-  if (!cardRef.value) return
+  if (!cardRef.value || !autoResizeEnabled) return
   const cfg = TAB_SIZES[tab.value]
   const w = cfg.width
   const h = Math.max(cfg.minHeight, cardRef.value.offsetHeight + OUTER_PADDING)
-  // Coalesce a flurry of ResizeObserver calls into one animation tick.
   if (pendingTimer !== null) clearTimeout(pendingTimer)
   pendingTimer = setTimeout(() => animateToSize(w, h), 16)
 }
 
 watch(tab, async () => {
   await new Promise((r) => requestAnimationFrame(r))
-  fitWindowToContent()
+  if (tab.value === 'session') {
+    autoResizeEnabled = true
+    fitWindowToContent()
+  } else {
+    // Layout tab: resize once to the layout size, then stop auto-resizing.
+    autoResizeEnabled = true
+    fitWindowToContent()
+    await new Promise((r) => setTimeout(r, ANIM_DURATION_MS + 50))
+    autoResizeEnabled = false
+  }
 })
 
 function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: boolean }) {
@@ -131,6 +145,9 @@ function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: b
 }
 
 onMounted(async () => {
+  // Permission preflight.
+  permsOk.value = await checkPermissions().catch(() => true)
+
   // Watch the inner card's size and resize the OS window to match.
   if (cardRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => fitWindowToContent())
@@ -192,6 +209,16 @@ const tabClass = (t: Tab) =>
       : 'px-3 py-1.5 text-xs uppercase tracking-widest border-b-2 border-transparent text-zinc-500 hover:text-zinc-300 transition-colors',
   )
 
+async function grantPermissions() {
+  await requestPermissions().catch(() => {})
+}
+
+async function recheckPermissions() {
+  permsChecking.value = true
+  permsOk.value = await checkPermissions().catch(() => true)
+  permsChecking.value = false
+}
+
 const linkDot = computed(() => {
   if (link.statusSeverity === 'error') return 'bg-red-500'
   if (link.statusSeverity === 'warn') return 'bg-amber-500'
@@ -234,6 +261,37 @@ const linkDot = computed(() => {
           </nav>
         </div>
       </header>
+
+      <div
+        v-if="!permsOk"
+        class="rounded border border-amber-700/60 bg-amber-900/20 p-4 space-y-2"
+      >
+        <div class="flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full bg-amber-500" />
+          <span class="text-sm text-amber-300 font-medium">{{ t('app.permissions.title') }}</span>
+        </div>
+        <p class="text-xs text-zinc-400 leading-relaxed">
+          {{ t('app.permissions.description') }}
+        </p>
+        <p class="text-xs text-zinc-500 leading-relaxed">
+          {{ t('app.permissions.steps') }}
+        </p>
+        <div class="flex gap-2">
+          <button
+            class="text-xs px-3 py-1.5 rounded bg-amber-700/40 border border-amber-700 hover:bg-amber-700/60 text-amber-200 transition-colors"
+            @click="grantPermissions"
+          >
+            {{ t('app.permissions.grant') }}
+          </button>
+          <button
+            class="text-xs px-3 py-1.5 rounded border border-zinc-700 hover:bg-zinc-800 transition-colors"
+            :disabled="permsChecking"
+            @click="recheckPermissions"
+          >
+            {{ t('app.permissions.recheck') }}
+          </button>
+        </div>
+      </div>
 
       <Transition
         :enter-active-class="'transition-opacity duration-150 ease-out'"

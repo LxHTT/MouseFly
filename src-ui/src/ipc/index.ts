@@ -129,6 +129,14 @@ export async function currentRole(): Promise<RoleEvent> {
   return await invoke<RoleEvent>('current_role')
 }
 
+export async function checkPermissions(): Promise<boolean> {
+  return await invoke<boolean>('check_permissions')
+}
+
+export async function requestPermissions(): Promise<boolean> {
+  return await invoke<boolean>('request_permissions')
+}
+
 export async function startAdvertising(): Promise<void> {
   await invoke('start_advertising')
 }

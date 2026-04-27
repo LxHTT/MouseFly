@@ -241,6 +241,8 @@ fn main() -> Result<()> {
             set_autostart,
             get_lock_to_host,
             set_lock_to_host,
+            check_permissions,
+            request_permissions,
             layout::update_layout,
             start_link,
             stop_link,
@@ -366,6 +368,23 @@ async fn set_autostart(app: AppHandle, enable: bool) -> std::result::Result<(), 
         mgr.enable().map_err(|e| format!("{e:#}"))
     } else {
         mgr.disable().map_err(|e| format!("{e:#}"))
+    }
+}
+
+#[tauri::command]
+fn check_permissions() -> bool {
+    permissions_granted()
+}
+
+#[tauri::command]
+fn request_permissions() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        mousefly_input::macos::accessibility_request_trust()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
     }
 }
 

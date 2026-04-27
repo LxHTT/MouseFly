@@ -1,6 +1,16 @@
 export default {
   app: {
     tabs: { session: '会话', layout: '布局' },
+    permissions: {
+      title: '需要权限',
+      description:
+        'MouseFly 需要「辅助功能」和「输入监控」权限才能捕获和注入键鼠事件。',
+      steps:
+        '打开系统设置 → 隐私与安全性 → 分别授予 MouseFly「辅助功能」和「输入监控」权限，然后重新启动应用。',
+      grant: '打开系统设置',
+      recheck: '重新检查',
+      granted: '权限已授予',
+    },
   },
   identity: {
     label: '本机',

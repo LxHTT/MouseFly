@@ -1,6 +1,16 @@
 export default {
   app: {
     tabs: { session: 'Session', layout: 'Layout' },
+    permissions: {
+      title: 'Permissions required',
+      description:
+        'MouseFly needs Accessibility and Input Monitoring permissions to capture and inject keyboard/mouse events.',
+      steps:
+        'Open System Settings → Privacy & Security → grant both Accessibility and Input Monitoring for MouseFly, then relaunch the app.',
+      grant: 'Open System Settings',
+      recheck: 'Re-check',
+      granted: 'Permissions granted',
+    },
   },
   identity: {
     label: 'This host',

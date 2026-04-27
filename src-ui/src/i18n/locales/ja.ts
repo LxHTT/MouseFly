@@ -1,6 +1,16 @@
 export default {
   app: {
     tabs: { session: 'セッション', layout: 'レイアウト' },
+    permissions: {
+      title: '権限が必要です',
+      description:
+        'MouseFly はキーボード・マウスイベントのキャプチャと注入に「アクセシビリティ」と「入力監視」の権限が必要です。',
+      steps:
+        'システム設定 → プライバシーとセキュリティ → MouseFly に「アクセシビリティ」と「入力監視」の両方を許可し、アプリを再起動してください。',
+      grant: 'システム設定を開く',
+      recheck: '再確認',
+      granted: '権限が付与されました',
+    },
   },
   identity: {
     label: 'このホスト',

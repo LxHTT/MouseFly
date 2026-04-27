@@ -1,6 +1,16 @@
 export default {
   app: {
     tabs: { session: '工作階段', layout: '版面' },
+    permissions: {
+      title: '需要權限',
+      description:
+        'MouseFly 需要「輔助使用」和「輸入監控」權限才能擷取和注入鍵盤滑鼠事件。',
+      steps:
+        '打開系統設定 → 隱私權與安全性 → 分別授予 MouseFly「輔助使用」和「輸入監控」權限，然後重新啟動應用程式。',
+      grant: '打開系統設定',
+      recheck: '重新檢查',
+      granted: '權限已授予',
+    },
   },
   identity: {
     label: '本機',
