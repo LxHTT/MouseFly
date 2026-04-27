@@ -151,7 +151,7 @@ impl InputBackend for WinBackend {
 
     fn inject(&self, frame: &Frame) -> Result<()> {
         match *frame {
-            Frame::PointerAbs { x, y, buttons: _ } => {
+            Frame::PointerAbs { x, y, .. } => {
                 let (vx, vy, vw, vh) = virtual_desktop_rect();
                 if vw <= 0 || vh <= 0 {
                     return Err(anyhow!("invalid virtual desktop size"));
@@ -404,6 +404,8 @@ fn mouse_event_to_frame(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<Frame> {
             Some(Frame::PointerAbs {
                 x: pt.x as f32,
                 y: pt.y as f32,
+                dx: 0.0,
+                dy: 0.0,
                 buttons,
             })
         }

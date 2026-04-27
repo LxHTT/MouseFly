@@ -49,10 +49,15 @@ pub struct Monitor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Frame {
     /// Absolute pointer position in the sender's screen coordinates (points).
-    /// Phase 0/1 fallback when neither side has agreed on a global layout
-    /// yet. Once Phase 3.5's edge-handoff math is engaged, the sender emits
-    /// `PointerOnMonitor` instead so the receiver can map by physical mm.
-    PointerAbs { x: f32, y: f32, buttons: Buttons },
+    /// `dx`/`dy` are the raw hardware deltas from the OS (not clamped to screen
+    /// bounds) — used sender-side for edge-crossing virtual cursor movement.
+    PointerAbs {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        buttons: Buttons,
+    },
     /// Pointer position on a specific remote monitor, in millimetres from the
     /// monitor's top-left. The receiver looks up the monitor by its
     /// `MonitorId` (matched against its own enumeration) and converts mm back

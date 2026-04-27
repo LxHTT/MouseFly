@@ -31,6 +31,7 @@ const currentLocale = computed({
 })
 const permsOk = ref(true)
 const permsChecking = ref(false)
+const permsDismissed = ref(false)
 let unlistenRole: UnlistenFn | null = null
 let unlistenHealth: UnlistenFn | null = null
 let unlistenStatus: UnlistenFn | null = null
@@ -263,12 +264,20 @@ const linkDot = computed(() => {
       </header>
 
       <div
-        v-if="!permsOk"
+        v-if="!permsOk && !permsDismissed"
         class="rounded border border-amber-700/60 bg-amber-900/20 p-4 space-y-2"
       >
-        <div class="flex items-center gap-2">
-          <span class="inline-block w-2 h-2 rounded-full bg-amber-500" />
-          <span class="text-sm text-amber-300 font-medium">{{ t('app.permissions.title') }}</span>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2 h-2 rounded-full bg-amber-500" />
+            <span class="text-sm text-amber-300 font-medium">{{ t('app.permissions.title') }}</span>
+          </div>
+          <button
+            class="text-zinc-500 hover:text-zinc-300 text-sm leading-none px-1"
+            @click="permsDismissed = true"
+          >
+            &times;
+          </button>
         </div>
         <p class="text-xs text-zinc-400 leading-relaxed">
           {{ t('app.permissions.description') }}

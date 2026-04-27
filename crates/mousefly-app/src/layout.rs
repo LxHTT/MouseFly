@@ -111,6 +111,8 @@ impl GlobalLayout {
         Some(Frame::PointerAbs {
             x: px_x,
             y: px_y,
+            dx: 0.0,
+            dy: 0.0,
             buttons,
         })
     }
@@ -207,8 +209,14 @@ pub async fn gate_outbound(
     last_cursor: &mut (f32, f32),
     edge: &mut EdgeState,
 ) -> Option<Frame> {
-    let (new_x, new_y, buttons) = match frame {
-        Frame::PointerAbs { x, y, buttons } => (x, y, buttons),
+    let (new_x, new_y, raw_dx, raw_dy, buttons) = match frame {
+        Frame::PointerAbs {
+            x,
+            y,
+            dx,
+            dy,
+            buttons,
+        } => (x, y, dx, dy, buttons),
         Frame::Heartbeat | Frame::RttProbe { .. } | Frame::RttReply { .. } => {
             return Some(frame);
         }
@@ -260,8 +268,10 @@ pub async fn gate_outbound(
         }
     };
 
-    let dx = new_x - last_cursor.0;
-    let dy = new_y - last_cursor.1;
+    // Use raw hardware deltas — the OS clamps the absolute position at screen
+    // edges, making position-based deltas zero when the cursor is pinned.
+    let dx = raw_dx;
+    let dy = raw_dy;
     *last_cursor = (new_x, new_y);
 
     let (l_min_x, l_min_y, l_max_x, l_max_y) = local_bounds;

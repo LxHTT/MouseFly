@@ -112,7 +112,7 @@ impl InputBackend for MacBackend {
 
     fn inject(&self, frame: &Frame) -> Result<()> {
         match *frame {
-            Frame::PointerAbs { x, y, buttons } => {
+            Frame::PointerAbs { x, y, buttons, .. } => {
                 let source = new_source()?;
                 let pos = CGPoint::new(x as f64, y as f64);
                 inject_mouse_at(&source, pos, buttons, &mut self.last_pos.lock().unwrap())?;
@@ -278,9 +278,13 @@ fn event_to_frame(etype: CGEventType, evt: &CGEvent) -> Option<Frame> {
         | CGEventType::RightMouseDragged
         | CGEventType::OtherMouseDragged => {
             let p = evt.location();
+            let dx = evt.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_X) as f32;
+            let dy = evt.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y) as f32;
             Some(Frame::PointerAbs {
                 x: p.x as f32,
                 y: p.y as f32,
+                dx,
+                dy,
                 buttons: 0,
             })
         }
