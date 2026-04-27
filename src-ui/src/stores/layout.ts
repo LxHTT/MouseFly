@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 export type HostSide = 'local' | 'remote'
 
@@ -58,11 +59,22 @@ export const useLayoutStore = defineStore('layout', () => {
     }
     if (remote.value) {
       const localBounds = local.value ? hostBounds(local.value) : null
-      const gap = 100
-      const startX = localBounds ? localBounds.maxX + gap : 0
-      remote.value.offsetX = startX
+      remote.value.offsetX = localBounds ? localBounds.maxX : 0
       remote.value.offsetY = 0
     }
+    pushOffsetsToRust()
+  }
+
+  function pushOffsetsToRust() {
+    const lo = local.value
+    const ro = remote.value
+    if (!lo && !ro) return
+    invoke('update_layout', {
+      args: {
+        local_offset: lo ? [lo.offsetX, lo.offsetY] : [0, 0],
+        remote_offset: ro ? [ro.offsetX, ro.offsetY] : [0, 0],
+      },
+    }).catch(() => {})
   }
 
   function __dev_mock__() {
@@ -128,6 +140,7 @@ export const useLayoutStore = defineStore('layout', () => {
     moveHost,
     setHostOffset,
     resetOffsets,
+    pushOffsetsToRust,
     __dev_mock__,
   }
 })

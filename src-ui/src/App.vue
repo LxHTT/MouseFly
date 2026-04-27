@@ -244,8 +244,10 @@ const linkDot = computed(() => {
         :leave-to-class="'opacity-0'"
         mode="out-in"
       >
-        <SessionView v-if="tab === 'session'" />
-        <LayoutView v-else />
+        <KeepAlive>
+          <SessionView v-if="tab === 'session'" />
+          <LayoutView v-else />
+        </KeepAlive>
       </Transition>
     </div>
   </main>

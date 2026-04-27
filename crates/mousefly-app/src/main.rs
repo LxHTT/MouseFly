@@ -613,6 +613,7 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                 let layout_for_pump = layout.clone();
                 let pump = tokio::spawn(async move {
                     let mut last_cursor = (0f32, 0f32);
+                    let mut edge = layout::EdgeState::default();
                     loop {
                         match cap_rx.recv().await {
                             Ok(frame) => {
@@ -630,6 +631,7 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                                     frame,
                                     &layout_for_pump,
                                     &mut last_cursor,
+                                    &mut edge,
                                 )
                                 .await;
                                 if let Some(frame) = gated {

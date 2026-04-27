@@ -138,39 +138,243 @@ fn mm_per_pixel(m: &Monitor) -> (f32, f32) {
     }
 }
 
-/// Sender-side gate: given a captured frame and the current cursor LVD
-/// position (state owned by the caller), return the frame to forward to the
-/// peer, or `None` if we should drop it because the cursor is on our own host.
+/// Edge-crossing state for the sender. Tracks whether the virtual cursor
+/// is "on remote" and its position there.
+#[derive(Debug, Default)]
+pub struct EdgeState {
+    /// True when the virtual cursor has crossed onto a remote monitor.
+    pub on_remote: bool,
+    /// Virtual cursor position in GVL pixels (only meaningful when on_remote).
+    pub virt_gvl_x: f32,
+    pub virt_gvl_y: f32,
+}
+
+impl GlobalLayout {
+    /// Bounding box of all local monitors in LVD pixels.
+    fn local_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        if self.local.monitors.is_empty() {
+            return None;
+        }
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for m in &self.local.monitors {
+            let x = m.position_in_local_vd.0 as f32;
+            let y = m.position_in_local_vd.1 as f32;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + m.logical_size_px.0 as f32);
+            max_y = max_y.max(y + m.logical_size_px.1 as f32);
+        }
+        Some((min_x, min_y, max_x, max_y))
+    }
+
+    /// Bounding box of all remote monitors in GVL pixels.
+    fn remote_bounds_gvl(&self) -> Option<(f32, f32, f32, f32)> {
+        if self.remote.monitors.is_empty() {
+            return None;
+        }
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
+        for m in &self.remote.monitors {
+            let x = self.remote.offset.0 + m.position_in_local_vd.0 as f32;
+            let y = self.remote.offset.1 + m.position_in_local_vd.1 as f32;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + m.logical_size_px.0 as f32);
+            max_y = max_y.max(y + m.logical_size_px.1 as f32);
+        }
+        Some((min_x, min_y, max_x, max_y))
+    }
+}
+
+/// Sender-side gate with edge-crossing support.
 ///
-/// PointerAbs is rewritten into PointerOnMonitor when the cursor is on a
-/// remote monitor; other input frames (button / scroll / key) pass through
-/// unchanged but only when the cursor is on remote.
+/// When the user's cursor hits the edge of the local screen that faces the
+/// remote host, we enter "remote mode": deltas are accumulated onto a virtual
+/// cursor that lives in the remote monitor space. Non-pointer frames (keys,
+/// scroll, buttons) are forwarded while on remote and suppressed while on
+/// local.
+///
+/// When the virtual cursor returns past the crossing edge, we exit remote
+/// mode and stop forwarding.
 pub async fn gate_outbound(
     frame: Frame,
     layout: &SharedLayout,
     last_cursor: &mut (f32, f32),
+    edge: &mut EdgeState,
 ) -> Option<Frame> {
-    if let Frame::PointerAbs { x, y, .. } = &frame {
-        *last_cursor = (*x, *y);
-    }
+    let (new_x, new_y, buttons) = match frame {
+        Frame::PointerAbs { x, y, buttons } => (x, y, buttons),
+        Frame::Heartbeat | Frame::RttProbe { .. } | Frame::RttReply { .. } => {
+            return Some(frame);
+        }
+        _ => {
+            // Non-pointer input frames: forward only when on remote.
+            return if edge.on_remote { Some(frame) } else { None };
+        }
+    };
+
     let g = layout.read().await;
-    // Empty layouts (Vue hasn't pushed offsets yet, no remote monitors) →
-    // fall back to forwarding everything as-is so Phase 0 / Phase 2 paths
-    // keep working for users who haven't arranged their layout yet.
+
     if g.remote.monitors.is_empty() {
+        *last_cursor = (new_x, new_y);
         return Some(frame);
     }
-    let (gvl_x, gvl_y) = g.local_to_gvl(last_cursor.0, last_cursor.1);
-    match g.gvl_to_remote_mm(gvl_x, gvl_y) {
-        Some((monitor, mm_x, mm_y)) => match frame {
-            Frame::PointerAbs { buttons, .. } => Some(Frame::PointerOnMonitor {
+
+    // When both offsets are (0,0) and no layout has been arranged, monitors
+    // overlap. Fall back to forwarding everything so Phase 0/2 paths work.
+    if g.local.offset == (0.0, 0.0) && g.remote.offset == (0.0, 0.0) {
+        let (gvl_x, gvl_y) = g.local_to_gvl(new_x, new_y);
+        *last_cursor = (new_x, new_y);
+        if let Some((monitor, mm_x, mm_y)) = g.gvl_to_remote_mm(gvl_x, gvl_y) {
+            edge.on_remote = true;
+            return Some(Frame::PointerOnMonitor {
                 monitor,
                 mm_x,
                 mm_y,
                 buttons,
-            }),
-            _ => Some(frame),
-        },
-        None => None,
+            });
+        }
+        edge.on_remote = false;
+        return None;
     }
+
+    // --- Edge-crossing logic (layout has been arranged) ---
+
+    let local_bounds = match g.local_bounds() {
+        Some(b) => b,
+        None => {
+            *last_cursor = (new_x, new_y);
+            return Some(frame);
+        }
+    };
+    let remote_gvl = match g.remote_bounds_gvl() {
+        Some(b) => b,
+        None => {
+            *last_cursor = (new_x, new_y);
+            return None;
+        }
+    };
+
+    let dx = new_x - last_cursor.0;
+    let dy = new_y - last_cursor.1;
+    *last_cursor = (new_x, new_y);
+
+    let (l_min_x, l_min_y, l_max_x, l_max_y) = local_bounds;
+    let edge_margin = 2.0;
+
+    if edge.on_remote {
+        edge.virt_gvl_x += dx;
+        edge.virt_gvl_y += dy;
+
+        // Clamp virtual cursor to remote bounds.
+        edge.virt_gvl_x = edge.virt_gvl_x.clamp(remote_gvl.0, remote_gvl.2 - 1.0);
+        edge.virt_gvl_y = edge.virt_gvl_y.clamp(remote_gvl.1, remote_gvl.3 - 1.0);
+
+        // Check if the virtual cursor has returned past the crossing edge
+        // toward local. Use the local bounds in GVL to detect this.
+        let local_gvl_min_x = g.local.offset.0 + l_min_x;
+        let local_gvl_max_x = g.local.offset.0 + l_max_x;
+        let local_gvl_min_y = g.local.offset.1 + l_min_y;
+        let local_gvl_max_y = g.local.offset.1 + l_max_y;
+
+        // If remote is to the right and virtual cursor moved left past the
+        // boundary, or remote is to the left and cursor moved right past it,
+        // exit remote mode.
+        let back_to_local = if remote_gvl.0 >= local_gvl_max_x - edge_margin {
+            // Remote is to the right: exit when virt moves left of remote left edge
+            edge.virt_gvl_x <= remote_gvl.0 && dx < 0.0
+        } else if remote_gvl.2 <= local_gvl_min_x + edge_margin {
+            // Remote is to the left
+            edge.virt_gvl_x >= remote_gvl.2 - 1.0 && dx > 0.0
+        } else if remote_gvl.1 >= local_gvl_max_y - edge_margin {
+            // Remote is below
+            edge.virt_gvl_y <= remote_gvl.1 && dy < 0.0
+        } else if remote_gvl.3 <= local_gvl_min_y + edge_margin {
+            // Remote is above
+            edge.virt_gvl_y >= remote_gvl.3 - 1.0 && dy > 0.0
+        } else {
+            false
+        };
+
+        if back_to_local {
+            edge.on_remote = false;
+            return None;
+        }
+
+        if let Some((monitor, mm_x, mm_y)) = g.gvl_to_remote_mm(edge.virt_gvl_x, edge.virt_gvl_y) {
+            return Some(Frame::PointerOnMonitor {
+                monitor,
+                mm_x,
+                mm_y,
+                buttons,
+            });
+        }
+        return None;
+    }
+
+    // --- Not on remote: check if cursor hit a local screen edge ---
+
+    let at_right = new_x >= l_max_x - edge_margin;
+    let at_left = new_x <= l_min_x + edge_margin;
+    let at_bottom = new_y >= l_max_y - edge_margin;
+    let at_top = new_y <= l_min_y + edge_margin;
+
+    let local_gvl_max_x = g.local.offset.0 + l_max_x;
+    let local_gvl_min_x = g.local.offset.0 + l_min_x;
+    let local_gvl_max_y = g.local.offset.1 + l_max_y;
+    let local_gvl_min_y = g.local.offset.1 + l_min_y;
+
+    // Determine if the remote is adjacent to the edge the cursor hit.
+    let cross = if at_right && remote_gvl.0 >= local_gvl_max_x - edge_margin {
+        let entry_y = g.local.offset.1 + new_y;
+        if entry_y >= remote_gvl.1 && entry_y < remote_gvl.3 {
+            Some((remote_gvl.0 + 1.0, entry_y))
+        } else {
+            None
+        }
+    } else if at_left && remote_gvl.2 <= local_gvl_min_x + edge_margin {
+        let entry_y = g.local.offset.1 + new_y;
+        if entry_y >= remote_gvl.1 && entry_y < remote_gvl.3 {
+            Some((remote_gvl.2 - 2.0, entry_y))
+        } else {
+            None
+        }
+    } else if at_bottom && remote_gvl.1 >= local_gvl_max_y - edge_margin {
+        let entry_x = g.local.offset.0 + new_x;
+        if entry_x >= remote_gvl.0 && entry_x < remote_gvl.2 {
+            Some((entry_x, remote_gvl.1 + 1.0))
+        } else {
+            None
+        }
+    } else if at_top && remote_gvl.3 <= local_gvl_min_y + edge_margin {
+        let entry_x = g.local.offset.0 + new_x;
+        if entry_x >= remote_gvl.0 && entry_x < remote_gvl.2 {
+            Some((entry_x, remote_gvl.3 - 2.0))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some((gvl_x, gvl_y)) = cross {
+        edge.on_remote = true;
+        edge.virt_gvl_x = gvl_x;
+        edge.virt_gvl_y = gvl_y;
+        if let Some((monitor, mm_x, mm_y)) = g.gvl_to_remote_mm(gvl_x, gvl_y) {
+            return Some(Frame::PointerOnMonitor {
+                monitor,
+                mm_x,
+                mm_y,
+                buttons,
+            });
+        }
+    }
+
+    None
 }
