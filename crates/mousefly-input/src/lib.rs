@@ -66,13 +66,14 @@ pub fn install_kill_switch() -> Result<()> {
     }
 }
 
-/// macOS-only: returns true if the process has Accessibility permission.
+/// macOS-only: returns true if the process has BOTH Accessibility and Input
+/// Monitoring permissions. CGEventTap requires both on macOS 10.15+.
 /// Returns true on non-macOS as a no-op (other OSes don't gate input capture
 /// the same way; Windows uses elevation, Linux uses portals).
 pub fn permissions_granted() -> bool {
     #[cfg(target_os = "macos")]
     {
-        macos::accessibility_trusted()
+        macos::accessibility_trusted() && macos::input_monitoring_granted()
     }
     #[cfg(not(target_os = "macos"))]
     {

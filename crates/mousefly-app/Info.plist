@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>MouseFly needs Accessibility permission to capture keyboard and mouse events from your Mac and forward them to other computers.</string>
+	<key>NSInputMonitoringUsageDescription</key>
+	<string>MouseFly needs Input Monitoring permission to capture keyboard and mouse events from your Mac and forward them to other computers.</string>
+</dict>
+</plist>

@@ -457,6 +457,18 @@ fn run_kill_switch_loop(ready_tx: std::sync::mpsc::SyncSender<Result<()>>) {
     CFRunLoop::run_current();
 }
 
+/// Returns true if the process has Input Monitoring permission. macOS 10.15+
+/// gates CGEventTap behind both Accessibility AND Input Monitoring.
+pub fn input_monitoring_granted() -> bool {
+    unsafe { IOHIDRequestAccess(K_IOHIDREQUEST_TYPE_LISTEN_EVENT) }
+}
+
+/// Triggers the macOS Input Monitoring permission prompt if not already granted.
+/// Like Accessibility, the process must be relaunched after the user grants.
+pub fn input_monitoring_request() -> bool {
+    unsafe { IOHIDRequestAccess(K_IOHIDREQUEST_TYPE_LISTEN_EVENT) }
+}
+
 // macOS: AXIsProcessTrustedWithOptions lives in ApplicationServices, which
 // CoreGraphics is part of, so we get the symbol for free via the existing
 // CoreGraphics link. core-foundation links its own crate-level CF.
@@ -465,3 +477,11 @@ extern "C" {
     fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
 }
+
+// IOHIDRequestAccess lives in IOKit framework. K_IOHIDREQUEST_TYPE_LISTEN_EVENT = 0.
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDRequestAccess(request_type: u32) -> bool;
+}
+
+const K_IOHIDREQUEST_TYPE_LISTEN_EVENT: u32 = 0;

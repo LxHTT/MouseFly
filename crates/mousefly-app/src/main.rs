@@ -295,9 +295,9 @@ fn main() -> Result<()> {
                 emit_status(
                     &app_handle,
                     "warn",
-                    "Accessibility / Input Monitoring permission missing. Grant both in \
-                     System Settings → Privacy & Security, then relaunch MouseFly. \
-                     Network link will still come up below.",
+                    "Accessibility and Input Monitoring permissions required. Grant both in \
+                     System Settings → Privacy & Security → Accessibility and Input Monitoring, \
+                     then relaunch MouseFly. Network link will still come up below.",
                 );
             }
 
@@ -409,7 +409,12 @@ fn check_permissions() -> bool {
 fn request_permissions() -> bool {
     #[cfg(target_os = "macos")]
     {
-        mousefly_input::macos::accessibility_request_trust()
+        // Request both Accessibility and Input Monitoring. Both are required for
+        // CGEventTap to work on macOS 10.15+. The process must be relaunched
+        // after the user grants either permission.
+        let accessibility = mousefly_input::macos::accessibility_request_trust();
+        let input_monitoring = mousefly_input::macos::input_monitoring_request();
+        accessibility && input_monitoring
     }
     #[cfg(not(target_os = "macos"))]
     {
