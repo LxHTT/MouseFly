@@ -244,29 +244,27 @@ const linkStatusVariant = computed(() => {
 </script>
 
 <template>
-  <main class="min-h-screen bg-background p-5">
-    <Card ref="cardRef" class="max-w-4xl mx-auto">
-      <CardHeader>
-        <div class="flex items-center justify-between">
-          <CardTitle class="flex items-center gap-2">
-            <Badge :variant="linkStatusVariant" class="h-2 w-2 p-0" />
-            MouseFly
-          </CardTitle>
-          <Select v-model="currentLocale">
-            <SelectTrigger class="w-[100px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="l in LOCALES" :key="l.code" :value="l.code">
-                {{ l.label }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+  <main ref="cardRef" class="min-h-screen bg-background p-3">
+    <div class="max-w-4xl mx-auto space-y-3">
+      <div class="flex items-center justify-between px-1">
+        <div class="flex items-center gap-2 text-lg font-semibold">
+          <Badge :variant="linkStatusVariant" class="h-2 w-2 p-0" />
+          MouseFly
         </div>
-      </CardHeader>
+        <Select v-model="currentLocale">
+          <SelectTrigger class="w-[100px] h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="l in LOCALES" :key="l.code" :value="l.code">
+              {{ l.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
-      <CardContent class="space-y-4">
-        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative pr-12">
+      <div class="space-y-3">
+        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative pr-10">
           <AlertCircle class="h-4 w-4" />
           <AlertTitle>{{ t('app.permissions.title') }}</AlertTitle>
           <AlertDescription class="space-y-2">
@@ -281,14 +279,12 @@ const linkStatusVariant = computed(() => {
               </Button>
             </div>
           </AlertDescription>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="absolute top-3 right-3 h-6 w-6"
+          <button
+            class="absolute top-2 right-2 p-1 rounded-md hover:bg-muted transition-colors"
             @click="permsDismissed = true"
           >
             <X class="h-4 w-4" />
-          </Button>
+          </button>
         </Alert>
 
         <Tabs v-model="tab" class="w-full">
@@ -310,7 +306,7 @@ const linkStatusVariant = computed(() => {
             <LogView />
           </TabsContent>
         </Tabs>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   </main>
 </template>

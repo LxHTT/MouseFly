@@ -381,7 +381,7 @@ defineExpose({ resetView })
       :class="{ 'cursor-grabbing': drag !== null }"
       :viewBox="`0 0 ${view.vw} ${view.vh}`"
       preserveAspectRatio="xMidYMid meet"
-      @wheel.passive.prevent="onWheel"
+      @wheel.prevent="onWheel"
       @pointerdown="onPointerDownBackground"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
