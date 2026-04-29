@@ -266,7 +266,7 @@ const linkStatusVariant = computed(() => {
       </CardHeader>
 
       <CardContent class="space-y-4">
-        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative">
+        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative pr-12">
           <AlertCircle class="h-4 w-4" />
           <AlertTitle>{{ t('app.permissions.title') }}</AlertTitle>
           <AlertDescription class="space-y-2">
@@ -284,7 +284,7 @@ const linkStatusVariant = computed(() => {
           <Button
             variant="ghost"
             size="icon"
-            class="absolute top-2 right-2 h-6 w-6"
+            class="absolute top-3 right-3 h-6 w-6"
             @click="permsDismissed = true"
           >
             <X class="h-4 w-4" />

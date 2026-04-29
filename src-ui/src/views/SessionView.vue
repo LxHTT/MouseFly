@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Copy, CheckCircle2, XCircle } from 'lucide-vue-next'
 
 const link = useLinkStore()
@@ -451,13 +452,11 @@ onBeforeUnmount(() => {
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="flex items-center space-x-2">
-            <input
+            <Checkbox
               id="custom-code"
-              v-model="useCustomCode"
-              type="checkbox"
-              class="accent-primary"
+              v-model:checked="useCustomCode"
             />
-            <Label for="custom-code">{{ t('session.setup.customCode') }}</Label>
+            <Label for="custom-code" class="cursor-pointer">{{ t('session.setup.customCode') }}</Label>
           </div>
           <div v-if="useCustomCode" class="space-y-2">
             <Input
@@ -502,13 +501,11 @@ onBeforeUnmount(() => {
                 <Input v-model="listenAddr" placeholder="0.0.0.0:7878" />
               </div>
               <div class="flex items-center space-x-2">
-                <input
+                <Checkbox
                   id="inject"
-                  v-model="enableInject"
-                  type="checkbox"
-                  class="accent-primary"
+                  v-model:checked="enableInject"
                 />
-                <Label for="inject">{{ t('session.setup.injectEvents') }}</Label>
+                <Label for="inject" class="cursor-pointer">{{ t('session.setup.injectEvents') }}</Label>
               </div>
             </div>
           </details>
