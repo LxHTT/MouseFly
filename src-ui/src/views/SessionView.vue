@@ -22,6 +22,14 @@ import {
   stopLink,
   type LocalIdentity,
 } from '../ipc'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Copy, CheckCircle2, XCircle } from 'lucide-vue-next'
 
 const link = useLinkStore()
 const pairing = usePairingStore()
@@ -31,7 +39,6 @@ const now = ref(Math.floor(Date.now() / 1000))
 let tickHandle: ReturnType<typeof setInterval> | null = null
 let unlistens: UnlistenFn[] = []
 
-// --- Setup-session form -------------------------------------------------
 const useCustomCode = ref(false)
 const customCode = ref('')
 const customCodeError = ref('')
@@ -42,13 +49,11 @@ const ttlSeconds = computed(() =>
 )
 const advancedOpen = ref(false)
 const listenAddr = ref('0.0.0.0:7878')
-const enableInject = ref(true) // session host wants the cursor to actually move
+const enableInject = ref(true)
 
-// --- Join-session form --------------------------------------------------
 const joinCode = ref('')
 const manualPeer = ref('')
 
-// --- Server-side state mirror ------------------------------------------
 type Status =
   | { kind: 'idle' }
   | { kind: 'hosting'; code: string; expiresUnix: number }
@@ -122,14 +127,10 @@ function validateCustomCode(): boolean {
 }
 
 async function setupSession() {
-  void ttlLabel.value // keep `computed` referenced; used by template
+  void ttlLabel.value
   if (useCustomCode.value && !validateCustomCode()) return
   customCodeError.value = ''
   try {
-    // Order matters: bind the data link first (so the port is up before we
-    // advertise), then turn on mDNS so peers can find this host, then arm
-    // the pairing code. mDNS broadcast only happens here — never on app
-    // launch — so we don't appear in others' lists until the user opts in.
     await startLink({
       kind: 'receiver',
       listen: listenAddr.value,
@@ -140,9 +141,7 @@ async function setupSession() {
       code: useCustomCode.value ? customCode.value.trim() : null,
       ttl_seconds: ttlSeconds.value,
     })
-    // The actual code arrives via the pairing-code event below.
   } catch (e) {
-    // Roll back on failure so we don't leave a half-started session.
     stopAdvertising().catch(() => undefined)
     stopLink().catch(() => undefined)
     cancelPairing().catch(() => undefined)
@@ -205,12 +204,9 @@ async function submitJoin() {
 
   try {
     await startPairInitiator(pairAddr, joinCode.value.replace(/\s+/g, ''))
-    // Pairing result comes back via listenPairingResult; on success we'll
-    // open the data link from the handler below.
   } catch (e) {
     status.value = { kind: 'failed', reason: String(e) }
   }
-  // Stash the data address so the result handler can use it.
   pendingDataAddr.value = dataAddr
 }
 
@@ -250,7 +246,6 @@ onMounted(async () => {
         }
         return
       }
-      // Pair OK. If we're the joiner, open the data link to peer.
       if (pendingDataAddr.value) {
         const target = pendingDataAddr.value
         pendingDataAddr.value = null
@@ -263,7 +258,6 @@ onMounted(async () => {
             status.value = { kind: 'failed', reason: String(err) }
           })
       } else {
-        // We were the responder — link is already on (we called startLink earlier).
         status.value = { kind: 'linked' }
         listPairedPeers().then((p) => (pairing.paired = p))
       }
@@ -283,337 +277,326 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="space-y-4">
+  <div class="space-y-4">
     <!-- Identity card -->
-    <div
-      v-if="identity"
-      class="rounded border border-zinc-800 bg-zinc-900/40 p-3 space-y-1.5"
-    >
-      <div class="flex items-center justify-between">
-        <div class="text-[10px] uppercase tracking-widest text-zinc-500">
-          {{ t('identity.label') }}
+    <Card v-if="identity">
+      <CardHeader class="pb-3">
+        <CardTitle class="text-sm">{{ t('identity.label') }}</CardTitle>
+        <CardDescription>{{ identity.instance_name }}</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <Label class="text-xs text-muted-foreground">{{ t('identity.id') }}</Label>
+          <code class="text-xs">{{ identity.host_id_hex.slice(0, 24) }}…</code>
+          <Button size="sm" variant="outline" @click="copy(identity.host_id_hex)">
+            <Copy class="h-3 w-3" />
+          </Button>
         </div>
-        <div class="text-xs text-zinc-300">{{ identity.instance_name }}</div>
-      </div>
-      <div class="flex items-center justify-between gap-2">
-        <div class="text-[10px] text-zinc-500">{{ t('identity.id') }}</div>
-        <div class="font-mono text-[11px] text-zinc-400 truncate flex-1 text-right">
-          {{ identity.host_id_hex.slice(0, 24) }}…
-        </div>
-        <button
-          class="text-[10px] px-1.5 py-0.5 rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-800"
-          @click="copy(identity.host_id_hex)"
-        >
-          {{ t('identity.copy') }}
-        </button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
 
     <!-- Active linked session -->
-    <div v-if="linkActive && status.kind === 'linked'" class="space-y-3">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm uppercase tracking-widest text-emerald-400">
-          {{
-            link.role === 'sender'
-              ? t('session.success.titleSender')
-              : t('session.success.titleReceiver')
-          }}
-        </h2>
-        <button
-          class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-          @click="stopSession"
-        >
-          {{
-            link.role === 'sender'
-              ? t('session.success.leave')
-              : t('session.success.stop')
-          }}
-        </button>
-      </div>
-      <div class="text-zinc-400 text-sm">
-        <span class="text-zinc-500">{{ t('session.metrics.peer') }}</span>
-        <span class="text-zinc-200 ml-2">{{ link.peer || '—' }}</span>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div class="border border-zinc-800 rounded p-3">
-          <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            {{ t('session.metrics.latencyP50') }}
+    <div v-if="linkActive && status.kind === 'linked'" class="space-y-4">
+      <Card>
+        <CardHeader>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <CheckCircle2 class="h-5 w-5 text-green-500" />
+              <CardTitle>
+                {{
+                  link.role === 'sender'
+                    ? t('session.success.titleSender')
+                    : t('session.success.titleReceiver')
+                }}
+              </CardTitle>
+            </div>
+            <Button size="sm" variant="outline" @click="stopSession">
+              {{
+                link.role === 'sender'
+                  ? t('session.success.leave')
+                  : t('session.success.stop')
+              }}
+            </Button>
           </div>
-          <div class="text-2xl tabular-nums">
-            {{ p50ms }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
-          </div>
-        </div>
-        <div class="border border-zinc-800 rounded p-3">
-          <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            {{ t('session.metrics.latencyP99') }}
-          </div>
-          <div class="text-2xl tabular-nums">
-            {{ p99ms }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
-          </div>
-        </div>
-        <div class="border border-zinc-800 rounded p-3">
-          <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            {{ t('session.metrics.eventsPerSec') }}
-          </div>
-          <div class="text-2xl tabular-nums">{{ link.eps }}</div>
-        </div>
-        <div class="border border-zinc-800 rounded p-3">
-          <div class="text-[10px] text-zinc-500 uppercase tracking-widest">
-            {{ t('session.metrics.clockOffset') }}
-          </div>
-          <div class="text-2xl tabular-nums">
-            {{ offsetMs }} <span class="text-sm text-zinc-500">{{ t('session.metrics.ms') }}</span>
-          </div>
-        </div>
-      </div>
-      <p class="text-xs text-zinc-600 leading-relaxed">
+          <CardDescription>
+            <span class="text-muted-foreground">{{ t('session.metrics.peer') }}</span>
+            <span class="ml-2">{{ link.peer || '—' }}</span>
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="grid grid-cols-2 gap-3">
+          <Card>
+            <CardHeader class="pb-2">
+              <CardDescription class="text-xs">{{ t('session.metrics.latencyP50') }}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div class="text-2xl font-bold tabular-nums">
+                {{ p50ms }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader class="pb-2">
+              <CardDescription class="text-xs">{{ t('session.metrics.latencyP99') }}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div class="text-2xl font-bold tabular-nums">
+                {{ p99ms }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader class="pb-2">
+              <CardDescription class="text-xs">{{ t('session.metrics.eventsPerSec') }}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div class="text-2xl font-bold tabular-nums">{{ link.eps }}</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader class="pb-2">
+              <CardDescription class="text-xs">{{ t('session.metrics.clockOffset') }}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div class="text-2xl font-bold tabular-nums">
+                {{ offsetMs }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </CardContent>
+      </Card>
+      <p class="text-xs text-muted-foreground">
         {{ t('session.metrics.killSwitch') }}
-        <kbd class="px-1 bg-zinc-800 rounded text-zinc-300">Ctrl + ⌘ + ⇧ + Esc</kbd>
-        (mac) /
-        <kbd class="px-1 bg-zinc-800 rounded text-zinc-300">Ctrl + Win + ⇧ + Esc</kbd>
-        (Win)
+        <kbd class="px-1 bg-muted rounded">Ctrl + ⌘ + ⇧ + Esc</kbd> (mac) /
+        <kbd class="px-1 bg-muted rounded">Ctrl + Win + ⇧ + Esc</kbd> (Win)
       </p>
     </div>
 
-    <!-- Hosting (waiting for someone to join) -->
-    <div v-else-if="status.kind === 'hosting'" class="space-y-3">
-      <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        {{ t('session.hosting.title') }}
-      </h2>
-      <div class="border border-zinc-800 rounded overflow-hidden">
-        <div
-          class="text-4xl tabular-nums tracking-[0.25em] text-center py-7 font-light"
-        >
-          {{ formattedCode(status.code) }}
+    <!-- Hosting -->
+    <Card v-else-if="status.kind === 'hosting'">
+      <CardHeader>
+        <CardTitle>{{ t('session.hosting.title') }}</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="border rounded-lg overflow-hidden">
+          <div class="text-4xl font-light tabular-nums tracking-[0.25em] text-center py-8">
+            {{ formattedCode(status.code) }}
+          </div>
+          <div v-if="codeRemaining !== null" class="h-1 bg-muted">
+            <div
+              class="h-full bg-primary transition-[width] duration-1000 ease-linear"
+              :style="{ width: codeProgress * 100 + '%' }"
+            />
+          </div>
         </div>
-        <div v-if="codeRemaining !== null" class="h-1 bg-zinc-800">
-          <div
-            class="h-full bg-blue-500 transition-[width] duration-1000 ease-linear"
-            :style="{ width: codeProgress * 100 + '%' }"
-          />
-        </div>
-      </div>
-      <p class="text-xs text-zinc-500 leading-relaxed">
-        {{ t('session.hosting.hint') }}
-        <span v-if="codeRemaining !== null">
-          {{ t('session.hosting.refreshIn') }}
-          <span class="text-zinc-300 font-mono">{{ codeRemainingLabel }}</span>
-          .
-        </span>
-        <span v-else>{{ t('session.hosting.neverExpires') }}</span>
-      </p>
-      <button
-        class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-        @click="stopSession"
-      >
-        {{ t('session.hosting.stop') }}
-      </button>
-    </div>
+        <CardDescription>
+          {{ t('session.hosting.hint') }}
+          <span v-if="codeRemaining !== null">
+            {{ t('session.hosting.refreshIn') }}
+            <span class="font-mono">{{ codeRemainingLabel }}</span>.
+          </span>
+          <span v-else>{{ t('session.hosting.neverExpires') }}</span>
+        </CardDescription>
+        <Button variant="outline" @click="stopSession">
+          {{ t('session.hosting.stop') }}
+        </Button>
+      </CardContent>
+    </Card>
 
-    <!-- Joining: enter code -->
-    <div v-else-if="status.kind === 'joining'" class="space-y-3">
-      <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        {{ t('session.joining.title', { peer: status.peerLabel }) }}
-      </h2>
-      <input
-        v-model="joinCode"
-        class="w-full border border-zinc-800 rounded p-3 text-2xl tabular-nums tracking-widest text-center bg-zinc-900 focus:border-blue-700 outline-none"
-        :placeholder="t('session.joining.placeholder')"
-        autofocus
-      />
-      <div class="flex gap-2">
-        <button
-          class="flex-1 px-3 py-2 rounded bg-blue-700/40 border border-blue-700 hover:bg-blue-700/60 disabled:opacity-50 transition-colors"
-          :disabled="joinCode.replace(/\s+/g, '').length < 6"
-          @click="submitJoin"
-        >
-          {{ t('session.joining.submit') }}
-        </button>
-        <button
-          class="px-3 py-2 rounded border border-zinc-700 hover:bg-zinc-800"
-          @click="status = { kind: 'idle' }"
-        >
-          {{ t('session.joining.cancel') }}
-        </button>
-      </div>
-    </div>
+    <!-- Joining -->
+    <Card v-else-if="status.kind === 'joining'">
+      <CardHeader>
+        <CardTitle>{{ t('session.joining.title', { peer: status.peerLabel }) }}</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <Input
+          v-model="joinCode"
+          class="text-2xl tabular-nums tracking-widest text-center h-16"
+          :placeholder="t('session.joining.placeholder')"
+          autofocus
+        />
+        <div class="flex gap-2">
+          <Button
+            class="flex-1"
+            :disabled="joinCode.replace(/\s+/g, '').length < 6"
+            @click="submitJoin"
+          >
+            {{ t('session.joining.submit') }}
+          </Button>
+          <Button variant="outline" @click="status = { kind: 'idle' }">
+            {{ t('session.joining.cancel') }}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
 
     <!-- Failed -->
-    <div v-else-if="status.kind === 'failed'" class="space-y-3">
-      <h2 class="text-sm uppercase tracking-widest text-red-400">
-        {{ t('session.failed.title') }}
-      </h2>
-      <div class="border border-red-800 bg-red-900/30 rounded p-3 text-sm">
-        {{ status.reason }}
-      </div>
-      <button
-        class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-        @click="status = { kind: 'idle' }"
-      >
-        {{ t('session.failed.tryAgain') }}
-      </button>
-    </div>
+    <Alert v-else-if="status.kind === 'failed'" variant="destructive">
+      <XCircle class="h-4 w-4" />
+      <AlertTitle>{{ t('session.failed.title') }}</AlertTitle>
+      <AlertDescription class="space-y-3">
+        <p>{{ status.reason }}</p>
+        <Button size="sm" variant="outline" @click="status = { kind: 'idle' }">
+          {{ t('session.failed.tryAgain') }}
+        </Button>
+      </AlertDescription>
+    </Alert>
 
-    <!-- Idle: setup OR join entry -->
+    <!-- Idle: setup OR join -->
     <div v-else class="space-y-4">
       <!-- Setup form -->
-      <div class="border border-zinc-800 rounded p-4 space-y-3">
-        <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-          {{ t('session.setup.title') }}
-        </h2>
-        <p class="text-xs text-zinc-500 leading-relaxed">
-          {{ t('session.setup.description') }}
-        </p>
-
-        <label class="flex items-center gap-2 text-xs text-zinc-300">
-          <input
-            v-model="useCustomCode"
-            type="checkbox"
-            class="accent-blue-600"
-          />
-          {{ t('session.setup.customCode') }}
-        </label>
-        <div v-if="useCustomCode" class="space-y-1">
-          <input
-            v-model="customCode"
-            class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
-            :placeholder="t('session.setup.codePlaceholder')"
-            @blur="validateCustomCode"
-          />
-          <div v-if="customCodeError" class="text-[11px] text-red-400">
-            {{ customCodeError }}
-          </div>
-        </div>
-
-        <div class="flex items-center gap-2 text-xs">
-          <span class="text-zinc-500 uppercase tracking-widest text-[10px]">{{
-            t('session.setup.refresh')
-          }}</span>
-          <select
-            v-model="ttlChoice"
-            :disabled="useCustomCode"
-            class="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs disabled:opacity-50"
-          >
-            <option :value="5">{{ t('session.setup.ttlEvery', { value: '5 min' }) }}</option>
-            <option :value="30">{{ t('session.setup.ttlEvery', { value: '30 min' }) }}</option>
-            <option :value="60">{{ t('session.setup.ttlEvery', { value: '1 h' }) }}</option>
-            <option value="never">{{ t('session.setup.ttlNever') }}</option>
-          </select>
-          <span v-if="useCustomCode" class="text-[11px] text-zinc-600">
-            {{ t('session.setup.ttlNote') }}
-          </span>
-        </div>
-
-        <details
-          class="border border-zinc-800 rounded text-xs"
-          :open="advancedOpen"
-          @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
-        >
-          <summary class="px-3 py-2 cursor-pointer text-zinc-400 hover:text-zinc-200">
-            {{ t('session.setup.advanced') }}
-          </summary>
-          <div class="p-3 pt-0 space-y-2">
-            <label class="block text-[10px] uppercase tracking-widest text-zinc-500">{{
-              t('session.setup.listenAddr')
-            }}</label>
+      <Card>
+        <CardHeader>
+          <CardTitle>{{ t('session.setup.title') }}</CardTitle>
+          <CardDescription>{{ t('session.setup.description') }}</CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="flex items-center space-x-2">
             <input
-              v-model="listenAddr"
-              class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
-              placeholder="0.0.0.0:7878"
+              id="custom-code"
+              v-model="useCustomCode"
+              type="checkbox"
+              class="accent-primary"
             />
-            <label class="flex items-center gap-2 text-xs text-zinc-400">
-              <input v-model="enableInject" type="checkbox" class="accent-emerald-600" />
-              {{ t('session.setup.injectEvents') }}
-            </label>
+            <Label for="custom-code">{{ t('session.setup.customCode') }}</Label>
           </div>
-        </details>
+          <div v-if="useCustomCode" class="space-y-2">
+            <Input
+              v-model="customCode"
+              :placeholder="t('session.setup.codePlaceholder')"
+              @blur="validateCustomCode"
+            />
+            <p v-if="customCodeError" class="text-sm text-destructive">
+              {{ customCodeError }}
+            </p>
+          </div>
 
-        <button
-          class="w-full px-3 py-2 rounded bg-emerald-700/40 border border-emerald-700 hover:bg-emerald-700/60 text-emerald-200 transition-colors"
-          @click="setupSession"
-        >
-          {{ t('session.setup.start') }}
-        </button>
-      </div>
+          <div class="flex items-center gap-2">
+            <Label class="text-xs">{{ t('session.setup.refresh') }}</Label>
+            <Select v-model="ttlChoice" :disabled="useCustomCode">
+              <SelectTrigger class="w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="5">{{ t('session.setup.ttlEvery', { value: '5 min' }) }}</SelectItem>
+                <SelectItem value="30">{{ t('session.setup.ttlEvery', { value: '30 min' }) }}</SelectItem>
+                <SelectItem value="60">{{ t('session.setup.ttlEvery', { value: '1 h' }) }}</SelectItem>
+                <SelectItem value="never">{{ t('session.setup.ttlNever') }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <span v-if="useCustomCode" class="text-xs text-muted-foreground">
+              {{ t('session.setup.ttlNote') }}
+            </span>
+          </div>
 
-      <!-- Discovered sessions -->
-      <div class="border border-zinc-800 rounded p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-            {{ t('session.discover.title') }}
-          </h2>
-          <span
-            v-if="visiblePeers.length"
-            class="text-[10px] text-zinc-500"
-            >{{ t('session.discover.foundCount', { count: visiblePeers.length }) }}</span
+          <details
+            class="border rounded-lg"
+            :open="advancedOpen"
+            @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
           >
-        </div>
-        <ul v-if="visiblePeers.length" class="space-y-2">
-          <li
-            v-for="peer in visiblePeers"
-            :key="peer.instance_name"
-            class="flex items-center justify-between border border-zinc-800 rounded p-3 hover:border-zinc-700 transition-colors"
-          >
-            <div class="min-w-0">
-              <div class="text-sm truncate">{{ peer.instance_name }}</div>
-              <div class="text-xs text-zinc-500 font-mono truncate">
-                {{
-                  formatPeerAddr(
-                    pickPeerIp(peer.addrs) ?? peer.addrs[0] ?? '?',
-                    peer.data_port || peer.port,
-                  )
-                }}
-                · fp {{ peer.fingerprint_hex.slice(0, 12) }}…
+            <summary class="px-4 py-3 cursor-pointer hover:bg-muted/50">
+              {{ t('session.setup.advanced') }}
+            </summary>
+            <div class="px-4 pb-4 space-y-3">
+              <div class="space-y-2">
+                <Label>{{ t('session.setup.listenAddr') }}</Label>
+                <Input v-model="listenAddr" placeholder="0.0.0.0:7878" />
+              </div>
+              <div class="flex items-center space-x-2">
+                <input
+                  id="inject"
+                  v-model="enableInject"
+                  type="checkbox"
+                  class="accent-primary"
+                />
+                <Label for="inject">{{ t('session.setup.injectEvents') }}</Label>
               </div>
             </div>
-            <button
-              class="ml-3 text-xs px-2 py-1 rounded bg-blue-700/40 border border-blue-700 hover:bg-blue-700/60 transition-colors"
-              @click="pickPeer(peer)"
-            >
-              {{ t('session.discover.join') }}
-            </button>
-          </li>
-        </ul>
-        <p v-else class="text-xs text-zinc-500">
-          {{ t('session.discover.scanning') }}
-        </p>
-        <details class="border border-zinc-800 rounded text-xs">
-          <summary class="px-3 py-2 cursor-pointer text-zinc-400 hover:text-zinc-200">
-            {{ t('session.discover.manualToggle') }}
-          </summary>
-          <div class="p-3 pt-0 space-y-2">
-            <input
-              v-model="manualPeer"
-              class="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
-              :placeholder="t('session.discover.manualPlaceholder')"
-            />
-            <button
-              class="w-full text-xs px-2 py-1.5 rounded bg-blue-700/40 border border-blue-700 hover:bg-blue-700/60 disabled:opacity-50"
-              :disabled="!manualPeer.trim()"
-              @click="pickManual"
-            >
-              {{ t('session.discover.continue') }}
-            </button>
-          </div>
-        </details>
-      </div>
+          </details>
 
-      <!-- Paired peers (memory of past joins) -->
-      <div v-if="pairing.paired.length" class="space-y-2">
-        <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-          {{ t('session.paired.title') }}
-        </h2>
-        <ul class="space-y-1 text-xs font-mono text-zinc-500">
-          <li
-            v-for="p in pairing.paired"
-            :key="p.host_id_hex"
-            class="flex items-center justify-between gap-2"
-          >
-            <span class="truncate">{{ p.instance_name }}</span>
-            <span class="text-zinc-600">{{ p.host_id_hex.slice(0, 10) }}…</span>
-          </li>
-        </ul>
-      </div>
+          <Button class="w-full" @click="setupSession">
+            {{ t('session.setup.start') }}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <!-- Discovered sessions -->
+      <Card>
+        <CardHeader>
+          <div class="flex items-center justify-between">
+            <CardTitle>{{ t('session.discover.title') }}</CardTitle>
+            <Badge v-if="visiblePeers.length" variant="secondary">
+              {{ t('session.discover.foundCount', { count: visiblePeers.length }) }}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent class="space-y-3">
+          <div v-if="visiblePeers.length" class="space-y-2">
+            <Card
+              v-for="peer in visiblePeers"
+              :key="peer.instance_name"
+              class="hover:bg-muted/50 transition-colors"
+            >
+              <CardContent class="flex items-center justify-between p-4">
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium">{{ peer.instance_name }}</div>
+                  <div class="text-xs text-muted-foreground font-mono truncate">
+                    {{
+                      formatPeerAddr(
+                        pickPeerIp(peer.addrs) ?? peer.addrs[0] ?? '?',
+                        peer.data_port || peer.port,
+                      )
+                    }}
+                    · fp {{ peer.fingerprint_hex.slice(0, 12) }}…
+                  </div>
+                </div>
+                <Button size="sm" @click="pickPeer(peer)">
+                  {{ t('session.discover.join') }}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+          <p v-else class="text-sm text-muted-foreground">
+            {{ t('session.discover.scanning') }}
+          </p>
+          <details class="border rounded-lg">
+            <summary class="px-4 py-3 cursor-pointer hover:bg-muted/50">
+              {{ t('session.discover.manualToggle') }}
+            </summary>
+            <div class="px-4 pb-4 space-y-3">
+              <Input
+                v-model="manualPeer"
+                :placeholder="t('session.discover.manualPlaceholder')"
+              />
+              <Button
+                class="w-full"
+                :disabled="!manualPeer.trim()"
+                @click="pickManual"
+              >
+                {{ t('session.discover.continue') }}
+              </Button>
+            </div>
+          </details>
+        </CardContent>
+      </Card>
+
+      <!-- Paired peers -->
+      <Card v-if="pairing.paired.length">
+        <CardHeader>
+          <CardTitle class="text-sm">{{ t('session.paired.title') }}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul class="space-y-2">
+            <li
+              v-for="p in pairing.paired"
+              :key="p.host_id_hex"
+              class="flex items-center justify-between text-sm"
+            >
+              <span class="truncate">{{ p.instance_name }}</span>
+              <code class="text-xs text-muted-foreground">{{ p.host_id_hex.slice(0, 10) }}…</code>
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
     </div>
-  </section>
+  </div>
 </template>

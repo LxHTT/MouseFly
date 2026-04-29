@@ -2,6 +2,9 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useLogStore } from '../stores/log'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 const { t } = useI18n()
 const logStore = useLogStore()
@@ -23,49 +26,48 @@ function onScroll() {
   autoScroll.value = scrollHeight - scrollTop - clientHeight < 40
 }
 
-const levelColor: Record<string, string> = {
-  error: 'text-red-400',
-  warn: 'text-amber-400',
-  info: 'text-zinc-300',
-  debug: 'text-zinc-500',
-  trace: 'text-zinc-600',
+const levelVariant: Record<string, 'destructive' | 'default' | 'secondary' | 'outline'> = {
+  error: 'destructive',
+  warn: 'secondary',
+  info: 'default',
+  debug: 'outline',
+  trace: 'outline',
 }
 </script>
 
 <template>
-  <section class="space-y-3">
-    <div class="flex items-center justify-between">
-      <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        {{ t('app.tabs.log') }}
-      </h2>
-      <button
-        class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800"
-        @click="logStore.clear()"
-      >
-        {{ t('log.clear') }}
-      </button>
-    </div>
-    <div
-      ref="listEl"
-      class="h-[480px] overflow-y-auto border border-zinc-800 rounded bg-zinc-950 p-2 space-y-0.5"
-      @scroll="onScroll"
-    >
-      <div
-        v-for="(entry, i) in logStore.entries"
-        :key="i"
-        class="text-[11px] leading-relaxed font-mono flex gap-2"
-      >
-        <span class="shrink-0 w-10 text-right text-zinc-600">
-          {{ new Date(entry.ts).toLocaleTimeString([], { hour12: false }) }}
-        </span>
-        <span :class="levelColor[entry.level] ?? 'text-zinc-400'" class="shrink-0 w-10 uppercase">
-          {{ entry.level }}
-        </span>
-        <span class="text-zinc-300 break-all">{{ entry.message }}</span>
+  <Card>
+    <CardHeader>
+      <div class="flex items-center justify-between">
+        <CardTitle>{{ t('app.tabs.log') }}</CardTitle>
+        <Button size="sm" variant="outline" @click="logStore.clear()">
+          {{ t('log.clear') }}
+        </Button>
       </div>
-      <p v-if="!logStore.entries.length" class="text-xs text-zinc-600 text-center py-8">
-        {{ t('log.empty') }}
-      </p>
-    </div>
-  </section>
+    </CardHeader>
+    <CardContent>
+      <div
+        ref="listEl"
+        class="h-[480px] overflow-y-auto rounded-lg border bg-muted/30 p-3 space-y-1 font-mono text-xs"
+        @scroll="onScroll"
+      >
+        <div
+          v-for="(entry, i) in logStore.entries"
+          :key="i"
+          class="flex gap-3 items-start"
+        >
+          <span class="shrink-0 text-muted-foreground text-[10px] w-16 text-right">
+            {{ new Date(entry.ts).toLocaleTimeString([], { hour12: false }) }}
+          </span>
+          <Badge :variant="levelVariant[entry.level] ?? 'outline'" class="shrink-0 w-14 justify-center text-[10px]">
+            {{ entry.level }}
+          </Badge>
+          <span class="flex-1 break-all">{{ entry.message }}</span>
+        </div>
+        <p v-if="!logStore.entries.length" class="text-center text-muted-foreground py-8">
+          {{ t('log.empty') }}
+        </p>
+      </div>
+    </CardContent>
+  </Card>
 </template>

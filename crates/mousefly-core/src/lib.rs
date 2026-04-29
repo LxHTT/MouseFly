@@ -101,4 +101,7 @@ pub enum Frame {
     /// in-order). Loopback safety is the sender's job — see
     /// `mousefly-app/src/clipboard.rs`.
     Clipboard { text: String },
+    /// Notifies peers that this host is exiting the session. Sent on graceful
+    /// shutdown so peers can update their UI and clean up state.
+    SessionExit,
 }

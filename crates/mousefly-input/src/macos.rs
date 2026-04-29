@@ -40,6 +40,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::InputBackend;
 
+// macOS: Linker section that authorizes input injection across security boundaries.
+// The section name tells macOS to allow event posting even to login screens and
+// across user sessions. Just the section name matters, not the contents.
+#[link_section = "__CGPreLoginApp,__cgpreloginapp"]
+#[used]
+static MAGIC_SECTION: [u8; 0] = [];
+
 pub struct MacBackend {
     /// Last absolute cursor position we injected. Click frames re-use this.
     last_pos: Mutex<(f64, f64)>,
@@ -172,7 +179,8 @@ impl InputBackend for MacBackend {
             | Frame::RttProbe { .. }
             | Frame::RttReply { .. }
             | Frame::LayoutUpdate { .. }
-            | Frame::Clipboard { .. } => {}
+            | Frame::Clipboard { .. }
+            | Frame::SessionExit => {}
         }
         Ok(())
     }

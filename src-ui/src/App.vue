@@ -24,6 +24,13 @@ import { useI18n } from 'vue-i18n'
 import SessionView from './views/SessionView.vue'
 import LayoutView from './views/LayoutView.vue'
 import LogView from './views/LogView.vue'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { AlertCircle, X } from 'lucide-vue-next'
 
 type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
@@ -64,14 +71,12 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   }
 }
 
-// Per-tab width. Session tab auto-fits height via ResizeObserver; Layout
-// tab sets height once on entry then allows manual resize.
 const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
-  session: { width: 560, minHeight: 820 },
-  layout: { width: 780, minHeight: 720 },
-  log: { width: 560, minHeight: 720 },
+  session: { width: 600, minHeight: 820 },
+  layout: { width: 820, minHeight: 720 },
+  log: { width: 600, minHeight: 720 },
 }
-const OUTER_PADDING = 40 // main.p-5 × 2 sides
+const OUTER_PADDING = 40
 const ANIM_DURATION_MS = 220
 const cardRef = ref<HTMLElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
@@ -79,8 +84,6 @@ let currentSize = { width: 0, height: 0 }
 let firstResize = true
 let animFrame: number | null = null
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
-// When true, ResizeObserver drives the window height (session tab).
-// When false, the window was sized once and the user can resize freely (layout tab).
 let autoResizeEnabled = true
 
 async function setWindow(w: number, h: number) {
@@ -88,7 +91,7 @@ async function setWindow(w: number, h: number) {
   try {
     await getCurrentWindow().setSize(new LogicalSize(w, h))
   } catch (_e) {
-    /* non-Tauri (vite preview, tests) */
+    /* non-Tauri */
   }
 }
 
@@ -105,7 +108,7 @@ function animateToSize(targetW: number, targetH: number) {
   const t0 = performance.now()
   const tick = () => {
     const t = Math.min(1, (performance.now() - t0) / ANIM_DURATION_MS)
-    const e = 1 - Math.pow(1 - t, 3) // cubic ease-out
+    const e = 1 - Math.pow(1 - t, 3)
     const w = Math.round(startW + (targetW - startW) * e)
     const h = Math.round(startH + (targetH - startH) * e)
     setWindow(w, h)
@@ -133,7 +136,6 @@ watch(tab, async () => {
     autoResizeEnabled = true
     fitWindowToContent()
   } else {
-    // Layout tab: resize once to the layout size, then stop auto-resizing.
     autoResizeEnabled = true
     fitWindowToContent()
     await new Promise((r) => setTimeout(r, ANIM_DURATION_MS + 50))
@@ -156,22 +158,18 @@ function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: b
 }
 
 onMounted(async () => {
-  // Permission preflight.
   permsOk.value = await checkPermissions().catch(() => true)
 
-  // Watch the inner card's size and resize the OS window to match.
   if (cardRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => fitWindowToContent())
     resizeObserver.observe(cardRef.value)
   }
   fitWindowToContent()
-  // Fetch the authoritative role first — Rust may have emitted "role" before
-  // the webview's listener was registered.
   try {
     const r = await currentRole()
     applyRole(r)
   } catch {
-    /* idle default is fine */
+    /* idle default */
   }
   unlistenRole = await listenRole((r) => applyRole(r))
   unlistenHealth = await listenLinkHealth((h) => {
@@ -227,13 +225,6 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
 })
 
-const tabClass = (t: Tab) =>
-  computed(() =>
-    tab.value === t
-      ? 'px-3 py-1.5 text-xs uppercase tracking-widest border-b-2 border-blue-500 text-zinc-100 transition-colors'
-      : 'px-3 py-1.5 text-xs uppercase tracking-widest border-b-2 border-transparent text-zinc-500 hover:text-zinc-300 transition-colors',
-  )
-
 async function grantPermissions() {
   await requestPermissions().catch(() => {})
 }
@@ -244,106 +235,82 @@ async function recheckPermissions() {
   permsChecking.value = false
 }
 
-const linkDot = computed(() => {
-  if (link.statusSeverity === 'error') return 'bg-red-500'
-  if (link.statusSeverity === 'warn') return 'bg-amber-500'
-  if (link.role === 'sender' || link.role === 'receiver') return 'bg-emerald-500'
-  return 'bg-zinc-600'
+const linkStatusVariant = computed(() => {
+  if (link.statusSeverity === 'error') return 'destructive'
+  if (link.statusSeverity === 'warn') return 'secondary'
+  if (link.role === 'sender' || link.role === 'receiver') return 'default'
+  return 'outline'
 })
 </script>
 
 <template>
-  <main class="bg-zinc-950 text-zinc-100 font-mono p-5">
-    <div
-      ref="cardRef"
-      class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 space-y-4"
-    >
-      <header class="flex items-center justify-between gap-3">
-        <h1 class="text-xl font-semibold tracking-tight flex items-center gap-2">
-          <span
-            class="inline-block w-2 h-2 rounded-full transition-colors"
-            :class="linkDot"
-          />
-          MouseFly
-        </h1>
-        <div class="flex items-center gap-2 -mb-1">
-          <select
-            v-model="currentLocale"
-            class="bg-zinc-900 border border-zinc-800 rounded text-[10px] py-0.5 px-1.5 text-zinc-400 hover:text-zinc-200 focus:border-zinc-700 outline-none"
-            :title="'language'"
-          >
-            <option v-for="l in LOCALES" :key="l.code" :value="l.code">
-              {{ l.label }}
-            </option>
-          </select>
-          <nav class="flex gap-1">
-            <button :class="tabClass('session').value" @click="tab = 'session'">
-              {{ t('app.tabs.session') }}
-            </button>
-            <button :class="tabClass('layout').value" @click="tab = 'layout'">
-              {{ t('app.tabs.layout') }}
-            </button>
-            <button :class="tabClass('log').value" @click="tab = 'log'">
-              {{ t('app.tabs.log') }}
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      <div
-        v-if="!permsOk && !permsDismissed"
-        class="rounded border border-amber-700/60 bg-amber-900/20 p-4 space-y-2"
-      >
+  <main class="min-h-screen bg-background p-5">
+    <Card ref="cardRef" class="max-w-4xl mx-auto">
+      <CardHeader>
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <span class="inline-block w-2 h-2 rounded-full bg-amber-500" />
-            <span class="text-sm text-amber-300 font-medium">{{ t('app.permissions.title') }}</span>
-          </div>
-          <button
-            class="text-zinc-500 hover:text-zinc-300 text-sm leading-none px-1"
+          <CardTitle class="flex items-center gap-2">
+            <Badge :variant="linkStatusVariant" class="h-2 w-2 p-0" />
+            MouseFly
+          </CardTitle>
+          <Select v-model="currentLocale">
+            <SelectTrigger class="w-[100px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="l in LOCALES" :key="l.code" :value="l.code">
+                {{ l.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+
+      <CardContent class="space-y-4">
+        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative">
+          <AlertCircle class="h-4 w-4" />
+          <AlertTitle>{{ t('app.permissions.title') }}</AlertTitle>
+          <AlertDescription class="space-y-2">
+            <p class="text-sm">{{ t('app.permissions.description') }}</p>
+            <p class="text-xs text-muted-foreground">{{ t('app.permissions.steps') }}</p>
+            <div class="flex gap-2 mt-3">
+              <Button size="sm" @click="grantPermissions">
+                {{ t('app.permissions.grant') }}
+              </Button>
+              <Button size="sm" variant="outline" :disabled="permsChecking" @click="recheckPermissions">
+                {{ t('app.permissions.recheck') }}
+              </Button>
+            </div>
+          </AlertDescription>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="absolute top-2 right-2 h-6 w-6"
             @click="permsDismissed = true"
           >
-            &times;
-          </button>
-        </div>
-        <p class="text-xs text-zinc-400 leading-relaxed">
-          {{ t('app.permissions.description') }}
-        </p>
-        <p class="text-xs text-zinc-500 leading-relaxed">
-          {{ t('app.permissions.steps') }}
-        </p>
-        <div class="flex gap-2">
-          <button
-            class="text-xs px-3 py-1.5 rounded bg-amber-700/40 border border-amber-700 hover:bg-amber-700/60 text-amber-200 transition-colors"
-            @click="grantPermissions"
-          >
-            {{ t('app.permissions.grant') }}
-          </button>
-          <button
-            class="text-xs px-3 py-1.5 rounded border border-zinc-700 hover:bg-zinc-800 transition-colors"
-            :disabled="permsChecking"
-            @click="recheckPermissions"
-          >
-            {{ t('app.permissions.recheck') }}
-          </button>
-        </div>
-      </div>
+            <X class="h-4 w-4" />
+          </Button>
+        </Alert>
 
-      <Transition
-        :enter-active-class="'transition-opacity duration-150 ease-out'"
-        :enter-from-class="'opacity-0'"
-        :enter-to-class="'opacity-100'"
-        :leave-active-class="'transition-opacity duration-100 ease-in'"
-        :leave-from-class="'opacity-100'"
-        :leave-to-class="'opacity-0'"
-        mode="out-in"
-      >
-        <KeepAlive>
-          <SessionView v-if="tab === 'session'" />
-          <LayoutView v-else-if="tab === 'layout'" />
-          <LogView v-else />
-        </KeepAlive>
-      </Transition>
-    </div>
+        <Tabs v-model="tab" class="w-full">
+          <TabsList class="grid w-full grid-cols-3">
+            <TabsTrigger value="session">{{ t('app.tabs.session') }}</TabsTrigger>
+            <TabsTrigger value="layout">{{ t('app.tabs.layout') }}</TabsTrigger>
+            <TabsTrigger value="log">{{ t('app.tabs.log') }}</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="session" class="mt-4">
+            <SessionView />
+          </TabsContent>
+
+          <TabsContent value="layout" class="mt-4">
+            <LayoutView />
+          </TabsContent>
+
+          <TabsContent value="log" class="mt-4">
+            <LogView />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   </main>
 </template>

@@ -69,6 +69,7 @@ enum Role {
 struct LinkRuntime {
     role: AsyncMutex<Option<Role>>,
     handle: AsyncMutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    shutdown_tx: AsyncMutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 #[tauri::command]
@@ -79,6 +80,9 @@ async fn start_link(
 ) -> std::result::Result<(), String> {
     // Stop any currently-running role first.
     {
+        if let Some(tx) = runtime.shutdown_tx.lock().await.take() {
+            let _ = tx.send(true);
+        }
         let mut h = runtime.handle.lock().await;
         if let Some(handle) = h.take() {
             handle.abort();
@@ -92,11 +96,14 @@ async fn start_link(
     *runtime.role.lock().await = Some(role.clone());
     let _ = app.emit("role", &role);
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    *runtime.shutdown_tx.lock().await = Some(shutdown_tx);
+
     let layout = app.state::<SharedLayout>().inner().clone();
     let role_for_task = role.clone();
     let app_for_task = app.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout).await {
+        if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout, shutdown_rx).await {
             error!("role task exited: {e:#}");
             emit_status(&app_for_task, "error", format!("{e:#}"));
         }
@@ -110,12 +117,16 @@ async fn stop_link(
     app: AppHandle,
     runtime: tauri::State<'_, Arc<LinkRuntime>>,
 ) -> std::result::Result<(), String> {
+    if let Some(tx) = runtime.shutdown_tx.lock().await.take() {
+        let _ = tx.send(true);
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
     if let Some(handle) = runtime.handle.lock().await.take() {
         handle.abort();
     }
     *runtime.role.lock().await = Some(Role::Idle);
     let _ = app.emit("role", &Role::Idle);
-    emit_status(&app, "info", "Link stopped");
+    emit_status(&app, "info", "Session ended");
     Ok(())
 }
 
@@ -361,9 +372,10 @@ fn main() -> Result<()> {
                     let runtime: tauri::State<Arc<LinkRuntime>> = app_handle.state();
                     runtime.inner().clone()
                 };
+                let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
                 let role_for_task = role.clone();
                 let handle = tauri::async_runtime::spawn(async move {
-                    if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout).await {
+                    if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout, shutdown_rx).await {
                         error!("role task exited: {e:#}");
                         emit_status(&app_for_task, "error", format!("{e:#}"));
                     }
@@ -371,6 +383,7 @@ fn main() -> Result<()> {
                 tauri::async_runtime::block_on(async {
                     *runtime_clone.role.lock().await = Some(role);
                     *runtime_clone.handle.lock().await = Some(handle);
+                    *runtime_clone.shutdown_tx.lock().await = Some(shutdown_tx);
                 });
             } else {
                 emit_status(
@@ -585,11 +598,11 @@ struct PairingStateSnapshot {
     pending_code: Arc<AsyncMutex<Option<pairing::PendingCode>>>,
 }
 
-async fn run_role(role: Role, app: AppHandle, layout: SharedLayout) -> Result<()> {
+async fn run_role(role: Role, app: AppHandle, layout: SharedLayout, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     match role {
         Role::Idle => Ok(()),
-        Role::Sender { peer } => run_sender(&peer, app, layout).await,
-        Role::Receiver { listen, inject } => run_receiver(&listen, inject, app, layout).await,
+        Role::Sender { peer } => run_sender(&peer, app, layout, shutdown_rx).await,
+        Role::Receiver { listen, inject } => run_receiver(&listen, inject, app, layout, shutdown_rx).await,
     }
 }
 
@@ -609,7 +622,7 @@ fn set_lock_to_host(enable: bool, app: AppHandle) {
     let _ = app.emit("lock-to-host", &enable);
 }
 
-async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<()> {
+async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let backend = Platform::new();
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
@@ -625,7 +638,7 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
     emit_status(
         &app,
         "info",
-        "Requesting input capture (may prompt for permissions)",
+        "Starting input capture (you may see a permission prompt)",
     );
     let capture = match backend.start_capture() {
         Ok(c) => c,
@@ -650,7 +663,7 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                 attempt = 0;
                 let actual_peer = link.remote_addr.to_string();
                 info!("forwarding events to {actual_peer}");
-                emit_status(&app, "info", format!("Forwarding events to {actual_peer}"));
+                emit_status(&app, "info", format!("Connected to {actual_peer}"));
                 let _ = app.emit("peer-addr", &actual_peer);
 
                 let _ = link
@@ -694,9 +707,9 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                                 if edge.on_remote != was_on_remote {
                                     was_on_remote = edge.on_remote;
                                     let msg = if edge.on_remote {
-                                        "Edge crossing: cursor entered remote"
+                                        "Cursor moved to remote computer"
                                     } else {
-                                        "Edge crossing: cursor returned to local"
+                                        "Cursor returned to this computer"
                                     };
                                     emit_log(&app_for_pump, "info", msg);
                                 }
@@ -712,33 +725,60 @@ async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout) -> Result<
                     }
                 });
 
-                while let Some(inbound) = link.inbound.recv().await {
-                    match inbound.frame {
-                        Frame::LayoutUpdate { monitors } => {
-                            info!(
-                                count = monitors.len(),
-                                "sender received remote LayoutUpdate"
-                            );
-                            {
-                                let mut g = layout.write().await;
-                                g.set_monitors(Side::Remote, monitors.clone());
+                loop {
+                    tokio::select! {
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                info!("sender: shutdown signal received, sending SessionExit");
+                                let _ = link.outbound.send(Frame::SessionExit).await;
+                                pump.abort();
+                                emit_status(&app, "info", "Session ended");
+                                return Ok(());
                             }
-                            emit_layout(&app, "remote", &monitors);
-                            emit_log(
-                                &app,
-                                "info",
-                                format!("Remote layout: {} monitor(s)", monitors.len()),
-                            );
                         }
-                        Frame::Clipboard { text } => {
-                            clipboard::apply(text, &clipboard_mark).await;
+                        inbound = link.inbound.recv() => {
+                            match inbound {
+                                Some(inbound) => {
+                                    match inbound.frame {
+                                        Frame::LayoutUpdate { monitors } => {
+                                            info!(
+                                                count = monitors.len(),
+                                                "sender received remote LayoutUpdate"
+                                            );
+                                            {
+                                                let mut g = layout.write().await;
+                                                g.set_monitors(Side::Remote, monitors.clone());
+                                            }
+                                            emit_layout(&app, "remote", &monitors);
+                                            emit_log(
+                                                &app,
+                                                "info",
+                                                format!("Remote layout: {} monitor(s)", monitors.len()),
+                                            );
+                                        }
+                                        Frame::Clipboard { text } => {
+                                            clipboard::apply(text, &clipboard_mark).await;
+                                        }
+                                        Frame::SessionExit => {
+                                            info!("sender: received SessionExit from peer");
+                                            pump.abort();
+                                            emit_status(&app, "info", "Remote host ended session");
+                                            let _ = app.emit("link-dropped", &());
+                                            break;
+                                        }
+                                        other => debug!(?other, "sender saw inbound frame (ignored)"),
+                                    }
+                                }
+                                None => {
+                                    pump.abort();
+                                    emit_status(&app, "warn", "Connection lost — reconnecting…");
+                                    let _ = app.emit("link-dropped", &());
+                                    break;
+                                }
+                            }
                         }
-                        other => debug!(?other, "sender saw inbound frame (ignored)"),
                     }
                 }
-                pump.abort();
-                emit_status(&app, "warn", "Link dropped — reconnecting…");
-                let _ = app.emit("link-dropped", &());
             }
             Err(e) => {
                 emit_status(&app, "warn", format!("Connect failed: {e:#} — retrying"));
@@ -757,6 +797,7 @@ async fn run_receiver(
     inject: bool,
     app: AppHandle,
     layout: SharedLayout,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let backend = Platform::new();
     let monitors = backend.enumerate_monitors().unwrap_or_default();
@@ -770,7 +811,7 @@ async fn run_receiver(
 
     loop {
         info!("waiting for sender on {addr}");
-        emit_status(&app, "info", format!("Listening on {addr} for sender…"));
+        emit_status(&app, "info", format!("Waiting for connection on {addr}…"));
         match serve(addr).await {
             Ok(mut link) => {
                 let actual_peer = link.remote_addr.to_string();
@@ -779,8 +820,8 @@ async fn run_receiver(
                     &app,
                     "info",
                     format!(
-                        "Sender {actual_peer} connected; injection {}",
-                        if inject { "ON" } else { "off" }
+                        "{actual_peer} connected; control {}",
+                        if inject { "enabled" } else { "disabled" }
                     ),
                 );
                 let _ = app.emit("peer-addr", &actual_peer);
@@ -793,52 +834,77 @@ async fn run_receiver(
                 spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
                 clipboard::spawn_poller(link.outbound.clone(), clipboard_mark.clone());
 
-                while let Some(inbound) = link.inbound.recv().await {
-                    match inbound.frame {
-                        Frame::LayoutUpdate { monitors } => {
-                            {
-                                let mut g = layout.write().await;
-                                g.set_monitors(Side::Remote, monitors.clone());
+                loop {
+                    tokio::select! {
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                info!("receiver: shutdown signal received, sending SessionExit");
+                                let _ = link.outbound.send(Frame::SessionExit).await;
+                                emit_status(&app, "info", "Session ended");
+                                return Ok(());
                             }
-                            emit_layout(&app, "remote", &monitors);
                         }
-                        Frame::Clipboard { text } => {
-                            clipboard::apply(text, &clipboard_mark).await;
-                        }
-                        Frame::PointerOnMonitor {
-                            monitor,
-                            mm_x,
-                            mm_y,
-                            ..
-                        } if inject => {
-                            static POM_COUNT: std::sync::atomic::AtomicU32 =
-                                std::sync::atomic::AtomicU32::new(0);
-                            let c = POM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            if c < 3 {
-                                info!(?monitor, mm_x, mm_y, "receiver got PointerOnMonitor");
-                            }
-                            let resolved = {
-                                let g = layout.read().await;
-                                g.pointer_on_monitor_to_local(&inbound.frame)
-                            };
-                            if let Some(frame) = resolved {
-                                if let Err(e) = backend.inject(&frame) {
-                                    warn!("inject (mapped) failed: {e:#}");
+                        inbound = link.inbound.recv() => {
+                            match inbound {
+                                Some(inbound) => {
+                                    match inbound.frame {
+                                        Frame::LayoutUpdate { monitors } => {
+                                            {
+                                                let mut g = layout.write().await;
+                                                g.set_monitors(Side::Remote, monitors.clone());
+                                            }
+                                            emit_layout(&app, "remote", &monitors);
+                                        }
+                                        Frame::Clipboard { text } => {
+                                            clipboard::apply(text, &clipboard_mark).await;
+                                        }
+                                        Frame::PointerOnMonitor {
+                                            monitor,
+                                            mm_x,
+                                            mm_y,
+                                            ..
+                                        } if inject => {
+                                            static POM_COUNT: std::sync::atomic::AtomicU32 =
+                                                std::sync::atomic::AtomicU32::new(0);
+                                            let c = POM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                            if c < 3 {
+                                                info!(?monitor, mm_x, mm_y, "receiver got PointerOnMonitor");
+                                            }
+                                            let resolved = {
+                                                let g = layout.read().await;
+                                                g.pointer_on_monitor_to_local(&inbound.frame)
+                                            };
+                                            if let Some(frame) = resolved {
+                                                if let Err(e) = backend.inject(&frame) {
+                                                    warn!("inject (mapped) failed: {e:#}");
+                                                }
+                                            } else {
+                                                warn!("PointerOnMonitor: no matching local monitor");
+                                            }
+                                        }
+                                        Frame::SessionExit => {
+                                            info!("receiver: received SessionExit from peer");
+                                            emit_status(&app, "info", "Remote host ended session");
+                                            let _ = app.emit("link-dropped", &());
+                                            break;
+                                        }
+                                        ref f if inject => {
+                                            if let Err(e) = backend.inject(f) {
+                                                warn!("inject failed: {e:#}");
+                                            }
+                                        }
+                                        _ => {}
+                                    }
                                 }
-                            } else {
-                                warn!("PointerOnMonitor: no matching local monitor");
+                                None => {
+                                    emit_status(&app, "warn", "Remote computer disconnected");
+                                    let _ = app.emit("link-dropped", &());
+                                    break;
+                                }
                             }
                         }
-                        ref f if inject => {
-                            if let Err(e) = backend.inject(f) {
-                                warn!("inject failed: {e:#}");
-                            }
-                        }
-                        _ => {}
                     }
                 }
-                emit_status(&app, "warn", "Sender disconnected — waiting for next");
-                let _ = app.emit("link-dropped", &());
             }
             Err(e) => {
                 emit_status(&app, "warn", format!("Listen failed: {e:#} — retrying"));

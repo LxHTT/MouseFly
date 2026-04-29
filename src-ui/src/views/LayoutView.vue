@@ -3,6 +3,9 @@ import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MonitorCanvas from '../components/MonitorCanvas.vue'
 import { useLayoutStore } from '../stores/layout'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 const layout = useLayoutStore()
 const { t } = useI18n()
@@ -14,8 +17,6 @@ onMounted(() => {
   if (new URLSearchParams(window.location.search).has('mock')) {
     layout.__dev_mock__()
   }
-  // Dev: paste in the browser console to inject mock data:
-  //   window.__mfMock?.()
   ;(window as unknown as { __mfMock?: () => void }).__mfMock = () =>
     layout.__dev_mock__()
 })
@@ -26,48 +27,48 @@ function reset() {
 </script>
 
 <template>
-  <section class="space-y-3 flex flex-col" style="min-height: 480px">
-    <header class="flex items-center justify-between">
-      <h2 class="text-sm uppercase tracking-widest text-zinc-400">
-        {{ t('layout.title') }}
-      </h2>
-      <button
-        class="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 disabled:opacity-50"
-        :disabled="!hasLocal && !hasRemote"
-        @click="reset"
-      >
-        {{ t('layout.reset') }}
-      </button>
-    </header>
+  <div class="space-y-4 flex flex-col" style="min-height: 480px">
+    <Card class="flex-1">
+      <CardHeader>
+        <div class="flex items-center justify-between">
+          <CardTitle>{{ t('layout.title') }}</CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            :disabled="!hasLocal && !hasRemote"
+            @click="reset"
+          >
+            {{ t('layout.reset') }}
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent class="relative" style="min-height: 420px">
+        <MonitorCanvas v-if="hasLocal || hasRemote" />
+        <div
+          v-else
+          class="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground px-6 text-center"
+        >
+          {{ t('layout.empty') }}
+        </div>
+      </CardContent>
+    </Card>
 
     <div
-      class="flex-1 relative rounded border border-zinc-800 overflow-hidden"
-      style="min-height: 420px"
-    >
-      <MonitorCanvas v-if="hasLocal || hasRemote" />
-      <div
-        v-else
-        class="absolute inset-0 flex items-center justify-center text-xs text-zinc-500 px-6 text-center leading-relaxed"
-      >
-        {{ t('layout.empty') }}
-      </div>
-    </div>
-
-    <footer
       v-if="hasLocal || hasRemote"
-      class="flex items-center gap-4 text-[10px] uppercase tracking-widest text-zinc-500"
+      class="flex items-center gap-4 text-xs text-muted-foreground"
     >
-      <span class="flex items-center gap-2">
-        <span class="inline-block w-3 h-3 rounded-sm border border-blue-500 bg-blue-500/20"></span>
+      <div class="flex items-center gap-2">
+        <Badge variant="default" class="h-3 w-3 p-0 bg-blue-500" />
         {{ t('layout.legendLocal') }}
-      </span>
-      <span class="flex items-center gap-2">
-        <span
-          class="inline-block w-3 h-3 rounded-sm border border-emerald-500 bg-emerald-500/20"
-        ></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <Badge variant="default" class="h-3 w-3 p-0 bg-green-500" />
         {{ t('layout.legendRemote') }}
+      </div>
+      <span v-if="!hasRemote" class="text-muted-foreground/60">
+        {{ t('layout.waitingRemote') }}
       </span>
-      <span v-if="!hasRemote" class="text-zinc-600">{{ t('layout.waitingRemote') }}</span>
-    </footer>
-  </section>
+    </div>
+  </div>
 </template>

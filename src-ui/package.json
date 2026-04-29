@@ -12,14 +12,21 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@vueuse/core": "^11",
+    "@vueuse/core": "^14.2.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^1.0.0",
     "pinia": "^2",
+    "radix-vue": "^1.9.17",
+    "reka-ui": "^2.9.6",
+    "tailwind-merge": "^3.5.0",
     "vue": "^3.5",
     "vue-i18n": "^10"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4",
     "@vitejs/plugin-vue": "^5",
+    "shadcn-vue": "^2.6.2",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^5",

@@ -534,7 +534,8 @@ fn transport_class(frame: &Frame) -> Class {
         Frame::LayoutUpdate { .. }
         | Frame::RttProbe { .. }
         | Frame::RttReply { .. }
-        | Frame::Clipboard { .. } => Class::Control,
+        | Frame::Clipboard { .. }
+        | Frame::SessionExit => Class::Control,
     }
 }
 

@@ -226,12 +226,29 @@ fn forward_events(
     debug!("mdns event bridge exited");
 }
 
+/// Filter out addresses that can't be used for LAN communication.
+/// Excludes loopback (127.0.0.0/8, ::1) and link-local (169.254.0.0/16, fe80::/10).
+fn is_usable_lan_address(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => {
+            // Exclude loopback (127.0.0.0/8) and link-local (169.254.0.0/16)
+            !v4.is_loopback() && !v4.is_link_local()
+        }
+        IpAddr::V6(v6) => {
+            // Exclude loopback (::1) and link-local (fe80::/10)
+            !v6.is_loopback()
+                && !v6.segments()[0] & 0xffc0 == 0xfe80
+        }
+    }
+}
+
 fn peer_from_service_info(info: &ServiceInfo, own_fp: &str) -> DiscoveredPeer {
     let instance_name = instance_from_fullname(info.get_fullname());
     let addrs: Vec<IpAddr> = info
         .get_addresses()
         .iter()
         .copied()
+        .filter(|addr| is_usable_lan_address(addr))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
