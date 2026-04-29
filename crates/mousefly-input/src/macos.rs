@@ -120,7 +120,7 @@ impl InputBackend for MacBackend {
     fn inject(&self, frame: &Frame) -> Result<()> {
         match *frame {
             Frame::PointerAbs { x, y, buttons, .. } => {
-                let source = new_source()?;
+                let source = default_event_source()?;
                 let pos = CGPoint::new(x as f64, y as f64);
                 inject_mouse_at(&source, pos, buttons, &mut self.last_pos.lock().unwrap())?;
             }
@@ -136,7 +136,7 @@ impl InputBackend for MacBackend {
                 ));
             }
             Frame::MouseButton { buttons } => {
-                let source = new_source()?;
+                let source = default_event_source()?;
                 let (x, y) = *self.last_pos.lock().unwrap();
                 let pos = CGPoint::new(x, y);
                 // Phase 1 simplification: only LEFT is wired through. Right /
@@ -149,6 +149,8 @@ impl InputBackend for MacBackend {
                 };
                 let evt = CGEvent::new_mouse_event(source, etype, pos, CGMouseButton::Left)
                     .map_err(|()| anyhow!("CGEvent::new_mouse_event failed"))?;
+                // macOS: Set flags to prevent sticky modifier keys (deskflow pattern)
+                evt.set_flags(CGEventFlags::empty());
                 evt.post(CGEventTapLocation::HID);
             }
             Frame::Scroll { dx, dy } => {
@@ -169,7 +171,7 @@ impl InputBackend for MacBackend {
                         return Ok(());
                     }
                 };
-                let source = new_source()?;
+                let source = default_event_source()?;
                 let evt = CGEvent::new_keyboard_event(source, mac_code, down)
                     .map_err(|()| anyhow!("CGEvent::new_keyboard_event failed (hid={code})"))?;
                 evt.set_flags(modifiers_to_cgflags(modifiers));
@@ -186,9 +188,12 @@ impl InputBackend for MacBackend {
     }
 }
 
-fn new_source() -> Result<CGEventSource> {
-    CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|()| anyhow!("CGEventSource::new failed"))
+// macOS: Use CombinedSessionState (equivalent to NULL in C API) for default
+// event source behavior, matching deskflow's nullptr approach for better
+// cross-application injection permissions.
+fn default_event_source() -> Result<CGEventSource> {
+    CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|()| anyhow!("CGEventSource::new(CombinedSessionState) failed"))
 }
 
 fn inject_mouse_at(
@@ -209,6 +214,8 @@ fn inject_mouse_at(
     };
     let evt = CGEvent::new_mouse_event(source.clone(), etype, pos, CGMouseButton::Left)
         .map_err(|()| anyhow!("CGEvent::new_mouse_event failed"))?;
+    // macOS: Set flags to prevent sticky modifier keys (deskflow pattern)
+    evt.set_flags(CGEventFlags::empty());
     evt.post(CGEventTapLocation::HID);
     Ok(())
 }
