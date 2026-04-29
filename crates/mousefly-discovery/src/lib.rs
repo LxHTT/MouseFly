@@ -247,7 +247,7 @@ fn peer_from_service_info(info: &ServiceInfo, own_fp: &str) -> DiscoveredPeer {
         .get_addresses()
         .iter()
         .copied()
-        .filter(|addr| is_usable_lan_address(addr))
+        .filter(is_usable_lan_address)
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
