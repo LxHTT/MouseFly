@@ -236,8 +236,7 @@ fn is_usable_lan_address(addr: &IpAddr) -> bool {
         }
         IpAddr::V6(v6) => {
             // Exclude loopback (::1) and link-local (fe80::/10)
-            !v6.is_loopback()
-                && !v6.segments()[0] & 0xffc0 == 0xfe80
+            !v6.is_loopback() && !v6.segments()[0] & 0xffc0 == 0xfe80
         }
     }
 }

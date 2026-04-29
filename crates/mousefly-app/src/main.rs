@@ -375,7 +375,9 @@ fn main() -> Result<()> {
                 let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
                 let role_for_task = role.clone();
                 let handle = tauri::async_runtime::spawn(async move {
-                    if let Err(e) = run_role(role_for_task, app_for_task.clone(), layout, shutdown_rx).await {
+                    if let Err(e) =
+                        run_role(role_for_task, app_for_task.clone(), layout, shutdown_rx).await
+                    {
                         error!("role task exited: {e:#}");
                         emit_status(&app_for_task, "error", format!("{e:#}"));
                     }
@@ -598,11 +600,18 @@ struct PairingStateSnapshot {
     pending_code: Arc<AsyncMutex<Option<pairing::PendingCode>>>,
 }
 
-async fn run_role(role: Role, app: AppHandle, layout: SharedLayout, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+async fn run_role(
+    role: Role,
+    app: AppHandle,
+    layout: SharedLayout,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     match role {
         Role::Idle => Ok(()),
         Role::Sender { peer } => run_sender(&peer, app, layout, shutdown_rx).await,
-        Role::Receiver { listen, inject } => run_receiver(&listen, inject, app, layout, shutdown_rx).await,
+        Role::Receiver { listen, inject } => {
+            run_receiver(&listen, inject, app, layout, shutdown_rx).await
+        }
     }
 }
 
@@ -622,7 +631,12 @@ fn set_lock_to_host(enable: bool, app: AppHandle) {
     let _ = app.emit("lock-to-host", &enable);
 }
 
-async fn run_sender(peer: &str, app: AppHandle, layout: SharedLayout, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+async fn run_sender(
+    peer: &str,
+    app: AppHandle,
+    layout: SharedLayout,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     let backend = Platform::new();
     let monitors = backend.enumerate_monitors().unwrap_or_default();
     emit_layout(&app, "local", &monitors);
