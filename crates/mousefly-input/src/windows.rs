@@ -275,7 +275,8 @@ impl InputBackend for WinBackend {
             | Frame::RttProbe { .. }
             | Frame::RttReply { .. }
             | Frame::LayoutUpdate { .. }
-            | Frame::Clipboard { .. } => {}
+            | Frame::Clipboard { .. }
+            | Frame::SessionExit => {}
         }
         Ok(())
     }
