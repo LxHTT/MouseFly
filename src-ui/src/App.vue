@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { useDark } from '@vueuse/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
@@ -25,15 +24,12 @@ import { useI18n } from 'vue-i18n'
 import SessionView from './views/SessionView.vue'
 import LayoutView from './views/LayoutView.vue'
 import LogView from './views/LogView.vue'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { AlertCircle, X } from 'lucide-vue-next'
-
-const isDarkMode = useDark()
 
 type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
