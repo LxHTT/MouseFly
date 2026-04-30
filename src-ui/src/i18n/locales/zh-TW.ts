@@ -95,15 +95,21 @@ export default {
   layout: {
     title: '版面',
     reset: '重置排列',
+    resetConfirm: '重置顯示器排列到預設位置？',
     empty: '啟動發送端或連接對端以檢視其版面。',
     legendLocal: '主機 A（本機）',
     legendRemote: '主機 B（對端）',
     waitingRemote: '等待對端版面……',
     fit: '適應',
     primaryBadge: '主螢幕',
+    thisHost: '本機',
+    remote: '對端',
   },
   log: {
     clear: '清除',
     empty: '尚無日誌。',
+    searchPlaceholder: '搜尋日誌...',
+    export: '匯出',
+    noMatch: '沒有符合目前篩選條件的日誌',
   },
 }

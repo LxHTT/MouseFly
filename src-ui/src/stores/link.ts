@@ -27,3 +27,4 @@ export const useLinkStore = defineStore('link', () => {
     statusText,
   }
 })
+

@@ -95,15 +95,21 @@ export default {
   layout: {
     title: '布局',
     reset: '重置排列',
+    resetConfirm: '重置显示器排列到默认位置？',
     empty: '启动发送端或连接对端以查看其布局。',
     legendLocal: '主机 A（本机）',
     legendRemote: '主机 B（对端）',
     waitingRemote: '等待对端布局……',
     fit: '适应',
     primaryBadge: '主屏',
+    thisHost: '本机',
+    remote: '对端',
   },
   log: {
     clear: '清除',
     empty: '暂无日志。',
+    searchPlaceholder: '搜索日志...',
+    export: '导出',
+    noMatch: '没有符合当前筛选条件的日志',
   },
 }

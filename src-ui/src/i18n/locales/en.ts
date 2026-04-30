@@ -95,15 +95,21 @@ export default {
   layout: {
     title: 'Layout',
     reset: 'Reset arrangement',
+    resetConfirm: 'Reset monitor arrangement to default positions?',
     empty: 'Run sender / connect to a peer to see its layout.',
     legendLocal: 'host A (local)',
     legendRemote: 'host B (remote)',
     waitingRemote: 'Waiting for remote layout…',
     fit: 'Fit',
     primaryBadge: 'PRI',
+    thisHost: 'This host',
+    remote: 'Remote',
   },
   log: {
     clear: 'Clear',
     empty: 'No log entries yet.',
+    searchPlaceholder: 'Search logs...',
+    export: 'Export',
+    noMatch: 'No logs match current filters',
   },
 }

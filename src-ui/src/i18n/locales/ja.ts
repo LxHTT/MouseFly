@@ -95,15 +95,21 @@ export default {
   layout: {
     title: 'レイアウト',
     reset: '配置をリセット',
+    resetConfirm: 'モニターの配置をデフォルトに戻しますか？',
     empty: '送信側を起動するか、ピアに接続するとレイアウトが表示されます。',
     legendLocal: 'ホスト A（自分）',
     legendRemote: 'ホスト B（相手）',
     waitingRemote: 'リモートのレイアウトを待機中……',
     fit: 'フィット',
     primaryBadge: 'メイン',
+    thisHost: 'このホスト',
+    remote: 'リモート',
   },
   log: {
     clear: 'クリア',
     empty: 'ログはまだありません。',
+    searchPlaceholder: 'ログを検索...',
+    export: 'エクスポート',
+    noMatch: '現在のフィルタに一致するログがありません',
   },
 }
