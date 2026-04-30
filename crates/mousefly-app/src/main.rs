@@ -272,6 +272,7 @@ fn main() -> Result<()> {
             pairing::list_paired_peers,
             pairing::cancel_pairing,
             pairing::get_local_identity,
+            pairing::get_pairing_state,
             get_autostart,
             set_autostart,
             get_lock_to_host,

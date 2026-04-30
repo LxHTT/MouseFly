@@ -121,6 +121,10 @@ export async function getLocalIdentity(): Promise<LocalIdentity> {
   return await invoke<LocalIdentity>('get_local_identity')
 }
 
+export async function getPairingState(): Promise<PairingCodeEvent | null> {
+  return await invoke<PairingCodeEvent | null>('get_pairing_state')
+}
+
 export function listenPairingLocked(
   cb: (e: PairingLockedEvent) => void,
 ): Promise<UnlistenFn> {
