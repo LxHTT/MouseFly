@@ -12,6 +12,22 @@ import {
 const layout = useLayoutStore()
 const { t } = useI18n()
 
+const isDark = ref(false)
+
+function updateTheme() {
+  isDark.value = document.documentElement.classList.contains('dark')
+}
+
+onMounted(() => {
+  updateTheme()
+  const observer = new MutationObserver(updateTheme)
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class'],
+  })
+  onBeforeUnmount(() => observer.disconnect())
+})
+
 const SNAP_DIST = 24
 const HIGHLIGHT_DIST = 8
 const ZOOM_MIN = 0.1
@@ -357,13 +373,17 @@ function hostFill(side: HostSide) {
   return side === 'local' ? 'rgba(59,130,246,0.06)' : 'rgba(16,185,129,0.06)'
 }
 function hostStroke(side: HostSide) {
-  return side === 'local' ? 'rgb(59,130,246)' : 'rgb(16,185,129)'
+  return side === 'local' ? 'rgb(96,165,250)' : 'rgb(52,211,153)'
 }
 function monitorFill(side: HostSide) {
   return side === 'local' ? 'rgba(59,130,246,0.18)' : 'rgba(16,185,129,0.18)'
 }
 function monitorStroke(side: HostSide) {
   return side === 'local' ? 'rgba(147,197,253,0.9)' : 'rgba(110,231,183,0.9)'
+}
+function monitorTextColor(side: HostSide) {
+  // Bright colors that work in both light and dark themes
+  return side === 'local' ? 'rgb(147,197,253)' : 'rgb(110,231,183)'
 }
 
 function hostRect(host: HostLayout) {
@@ -377,7 +397,7 @@ defineExpose({ resetView })
   <div class="relative w-full h-full select-none">
     <svg
       ref="svgEl"
-      class="w-full h-full bg-zinc-950 cursor-grab"
+      class="w-full h-full bg-zinc-100 dark:bg-zinc-950 cursor-grab"
       :class="{ 'cursor-grabbing': drag !== null }"
       :viewBox="`0 0 ${view.vw} ${view.vh}`"
       preserveAspectRatio="xMidYMid meet"
@@ -396,7 +416,7 @@ defineExpose({ resetView })
           patternUnits="userSpaceOnUse"
           :patternTransform="transform"
         >
-          <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgb(39,39,42)" stroke-width="1" />
+          <path d="M 80 0 L 0 0 0 80" fill="none" stroke="hsl(var(--color-border))" stroke-width="1" />
         </pattern>
       </defs>
       <rect width="100%" height="100%" fill="url(#grid)" />
@@ -444,7 +464,7 @@ defineExpose({ resetView })
             <text
               :x="m.posX + 16"
               :y="m.posY + 36"
-              fill="rgb(244,244,245)"
+              :fill="monitorTextColor(host.side)"
               font-size="22"
               font-family="ui-monospace, SFMono-Regular, monospace"
             >
@@ -457,15 +477,16 @@ defineExpose({ resetView })
                 width="48"
                 height="22"
                 rx="4"
-                fill="rgba(250,204,21,0.2)"
-                stroke="rgb(250,204,21)"
+                :fill="monitorTextColor(host.side)"
+                fill-opacity="0.2"
+                :stroke="monitorTextColor(host.side)"
                 stroke-width="1"
               />
               <text
                 :x="m.posX + m.widthPx - 40"
                 :y="m.posY + 32"
                 text-anchor="middle"
-                fill="rgb(250,204,21)"
+                :fill="monitorTextColor(host.side)"
                 font-size="14"
                 font-family="ui-monospace, SFMono-Regular, monospace"
               >
@@ -482,7 +503,7 @@ defineExpose({ resetView })
           :y1="h.y1"
           :x2="h.x2"
           :y2="h.y2"
-          stroke="rgb(244,114,182)"
+          stroke="hsl(var(--color-destructive))"
           stroke-width="6"
           stroke-linecap="round"
           opacity="0.85"
@@ -494,7 +515,7 @@ defineExpose({ resetView })
       class="absolute top-2 right-2 flex gap-1 text-[10px] uppercase tracking-widest"
     >
       <button
-        class="px-2 py-1 rounded border border-zinc-800 bg-zinc-900/80 text-zinc-300 hover:bg-zinc-800"
+        class="px-2 py-1 rounded border border-zinc-700 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-700 transition-colors backdrop-blur-sm"
         @click="resetView"
       >
         {{ t('layout.fit') }}
