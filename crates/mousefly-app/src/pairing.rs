@@ -209,10 +209,13 @@ pub async fn get_pairing_state(
 ) -> std::result::Result<Option<PairingCodePayload>, String> {
     let guard = state.pending_code.lock().await;
     if let Some(pending) = guard.as_ref() {
-        let expires_unix = pending.expires_at.map(|instant| {
-            let elapsed = instant.saturating_duration_since(Instant::now());
-            mousefly_pair::now_unix() + elapsed.as_secs()
-        }).unwrap_or(0);
+        let expires_unix = pending
+            .expires_at
+            .map(|instant| {
+                let elapsed = instant.saturating_duration_since(Instant::now());
+                mousefly_pair::now_unix() + elapsed.as_secs()
+            })
+            .unwrap_or(0);
         Ok(Some(PairingCodePayload {
             code: pending.raw.clone(),
             expires_unix,
