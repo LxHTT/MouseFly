@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useDark } from '@vueuse/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
@@ -31,6 +32,8 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { AlertCircle, X } from 'lucide-vue-next'
+
+const isDarkMode = useDark()
 
 type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
@@ -71,22 +74,17 @@ function mapMonitor(m: WireMonitor): CanvasMonitor {
   }
 }
 
-const TAB_SIZES: Record<Tab, { width: number; minHeight: number }> = {
-  session: { width: 600, minHeight: 820 },
-  layout: { width: 820, minHeight: 720 },
-  log: { width: 600, minHeight: 720 },
+const DEFAULT_WIDTH = 720
+const TAB_HEIGHTS: Record<Tab, number> = {
+  session: 600,
+  layout: 620,
+  log: 780,
 }
-const OUTER_PADDING = 40
 const ANIM_DURATION_MS = 220
-const cardRef = ref<HTMLElement | null>(null)
-let resizeObserver: ResizeObserver | null = null
 let currentSize = { width: 0, height: 0 }
-let firstResize = true
 let animFrame: number | null = null
-let pendingTimer: ReturnType<typeof setTimeout> | null = null
-let autoResizeEnabled = true
 
-async function setWindow(w: number, h: number) {
+async function setWindowSize(w: number, h: number) {
   currentSize = { width: w, height: h }
   try {
     await getCurrentWindow().setSize(new LogicalSize(w, h))
@@ -95,23 +93,25 @@ async function setWindow(w: number, h: number) {
   }
 }
 
-function animateToSize(targetW: number, targetH: number) {
-  if (firstResize) {
-    firstResize = false
-    setWindow(targetW, targetH)
-    return
+async function getCurrentSize(): Promise<{ width: number; height: number }> {
+  try {
+    const size = await getCurrentWindow().innerSize()
+    return { width: size.width, height: size.height }
+  } catch {
+    return { width: DEFAULT_WIDTH, height: TAB_HEIGHTS.session }
   }
+}
+
+function animateToHeight(targetH: number) {
   if (animFrame !== null) cancelAnimationFrame(animFrame)
-  const startW = currentSize.width
   const startH = currentSize.height
-  if (startW === targetW && startH === targetH) return
+  if (startH === targetH) return
   const t0 = performance.now()
   const tick = () => {
     const t = Math.min(1, (performance.now() - t0) / ANIM_DURATION_MS)
     const e = 1 - Math.pow(1 - t, 3)
-    const w = Math.round(startW + (targetW - startW) * e)
     const h = Math.round(startH + (targetH - startH) * e)
-    setWindow(w, h)
+    setWindowSize(currentSize.width, h)
     if (t < 1) {
       animFrame = requestAnimationFrame(tick)
     } else {
@@ -121,26 +121,9 @@ function animateToSize(targetW: number, targetH: number) {
   animFrame = requestAnimationFrame(tick)
 }
 
-function fitWindowToContent() {
-  if (!cardRef.value || !autoResizeEnabled) return
-  const cfg = TAB_SIZES[tab.value]
-  const w = cfg.width
-  const h = Math.max(cfg.minHeight, cardRef.value.offsetHeight + OUTER_PADDING)
-  if (pendingTimer !== null) clearTimeout(pendingTimer)
-  pendingTimer = setTimeout(() => animateToSize(w, h), 16)
-}
-
-watch(tab, async () => {
-  await new Promise((r) => requestAnimationFrame(r))
-  if (tab.value === 'session') {
-    autoResizeEnabled = true
-    fitWindowToContent()
-  } else {
-    autoResizeEnabled = true
-    fitWindowToContent()
-    await new Promise((r) => setTimeout(r, ANIM_DURATION_MS + 50))
-    autoResizeEnabled = false
-  }
+watch(tab, () => {
+  const height = TAB_HEIGHTS[tab.value]
+  animateToHeight(height)
 })
 
 function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: boolean }) {
@@ -158,20 +141,35 @@ function applyRole(r: { kind: string; peer?: string; listen?: string; inject?: b
 }
 
 onMounted(async () => {
-  permsOk.value = await checkPermissions().catch(() => true)
+  permsOk.value = await checkPermissions().catch(() => false)
 
-  if (cardRef.value && typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(() => fitWindowToContent())
-    resizeObserver.observe(cardRef.value)
+  const size = await getCurrentSize()
+  currentSize = size
+  const height = TAB_HEIGHTS[tab.value]
+  if (Math.abs(size.height - height) > 10) {
+    await setWindowSize(size.width, height)
   }
-  fitWindowToContent()
+
+  try {
+    const win = getCurrentWindow()
+    await win.onResized(async () => {
+      const newSize = await getCurrentSize()
+      currentSize = newSize
+    })
+  } catch {
+    /* non-Tauri */
+  }
+
   try {
     const r = await currentRole()
     applyRole(r)
-  } catch {
-    /* idle default */
+  } catch (err) {
+    console.error('Failed to get current role:', err)
   }
-  unlistenRole = await listenRole((r) => applyRole(r))
+
+  unlistenRole = await listenRole((r) => {
+    applyRole(r)
+  })
   unlistenHealth = await listenLinkHealth((h) => {
     link.p50us = h.p50_us
     link.p99us = h.p99_us
@@ -189,7 +187,7 @@ onMounted(async () => {
         (e.side === 'remote' && layoutStore.remote === null)
       layoutStore.setHost({
         side: e.side,
-        instanceName: e.side === 'local' ? 'This host' : link.peer || 'Remote',
+        instanceName: e.side === 'local' ? t('layout.thisHost') : link.peer || t('layout.remote'),
         offsetX: 0,
         offsetY: 0,
         monitors: e.monitors.map(mapMonitor),
@@ -222,7 +220,6 @@ onBeforeUnmount(() => {
   unlistenDropped?.()
   unlistenPeerAddr?.()
   unlistenLogEntry?.()
-  resizeObserver?.disconnect()
 })
 
 async function grantPermissions() {
@@ -231,7 +228,7 @@ async function grantPermissions() {
 
 async function recheckPermissions() {
   permsChecking.value = true
-  permsOk.value = await checkPermissions().catch(() => true)
+  permsOk.value = await checkPermissions().catch(() => false)
   permsChecking.value = false
 }
 
@@ -244,7 +241,7 @@ const linkStatusVariant = computed(() => {
 </script>
 
 <template>
-  <main ref="cardRef" class="min-h-screen bg-background p-3">
+  <main class="min-h-screen bg-background p-3">
     <div class="max-w-4xl mx-auto space-y-3">
       <div class="flex items-center justify-between px-1">
         <div class="flex items-center gap-2 text-lg font-semibold">
@@ -264,7 +261,7 @@ const linkStatusVariant = computed(() => {
       </div>
 
       <div class="space-y-3">
-        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative pr-10">
+        <Alert v-if="!permsOk && !permsDismissed" variant="default" class="relative pr-8">
           <AlertCircle class="h-4 w-4" />
           <AlertTitle>{{ t('app.permissions.title') }}</AlertTitle>
           <AlertDescription class="space-y-2">
@@ -294,17 +291,17 @@ const linkStatusVariant = computed(() => {
             <TabsTrigger value="log">{{ t('app.tabs.log') }}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="session" class="mt-4">
-            <SessionView />
-          </TabsContent>
-
-          <TabsContent value="layout" class="mt-4">
-            <LayoutView />
-          </TabsContent>
-
-          <TabsContent value="log" class="mt-4">
-            <LogView />
-          </TabsContent>
+          <div class="mt-4">
+            <div v-show="tab === 'session'">
+              <SessionView />
+            </div>
+            <div v-show="tab === 'layout'">
+              <LayoutView />
+            </div>
+            <div v-show="tab === 'log'">
+              <LogView />
+            </div>
+          </div>
         </Tabs>
       </div>
     </div>
