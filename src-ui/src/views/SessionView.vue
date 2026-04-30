@@ -8,6 +8,7 @@ import {
   cancelPairing,
   formatPeerAddr,
   getLocalIdentity,
+  getPairingState,
   listenDiscoveredPeers,
   listenPairingCode,
   listenPairingLocked,
@@ -102,6 +103,26 @@ const offsetMs = computed(() => (link.offsetNs / 1e6).toFixed(2))
 watch(useCustomCode, (v) => {
   if (!v) customCode.value = ''
   customCodeError.value = ''
+})
+
+watch(() => link.role, async (role, oldRole) => {
+  if (role === 'idle' && (status.value.kind === 'linked' || status.value.kind === 'hosting')) {
+    status.value = { kind: 'idle' }
+  } else if ((role === 'sender' || role === 'receiver') && oldRole === 'idle' && status.value.kind === 'idle') {
+    const hasActiveConnection = link.p50us > 0 || link.eps > 0
+    if (hasActiveConnection) {
+      status.value = { kind: 'linked' }
+    } else {
+      const pairingState = await getPairingState().catch(() => null)
+      if (pairingState) {
+        status.value = {
+          kind: 'hosting',
+          code: pairingState.code,
+          expiresUnix: pairingState.expires_unix,
+        }
+      }
+    }
+  }
 })
 
 watch(
@@ -225,6 +246,22 @@ onMounted(async () => {
   identity.value = await getLocalIdentity().catch(() => null)
   pairing.paired = await listPairedPeers().catch(() => [])
 
+  if (link.role === 'sender' || link.role === 'receiver') {
+    const hasActiveConnection = link.p50us > 0 || link.eps > 0
+    if (hasActiveConnection) {
+      status.value = { kind: 'linked' }
+    } else {
+      const pairingState = await getPairingState().catch(() => null)
+      if (pairingState) {
+        status.value = {
+          kind: 'hosting',
+          code: pairingState.code,
+          expiresUnix: pairingState.expires_unix,
+        }
+      }
+    }
+  }
+
   unlistens.push(
     await listenDiscoveredPeers((peers) => {
       pairing.discovered = peers
@@ -278,32 +315,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <!-- Identity card -->
-    <Card v-if="identity">
-      <CardHeader class="pb-3">
-        <CardTitle class="text-sm">{{ t('identity.label') }}</CardTitle>
-        <CardDescription>{{ identity.instance_name }}</CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <Label class="text-xs text-muted-foreground">{{ t('identity.id') }}</Label>
-          <code class="text-xs">{{ identity.host_id_hex.slice(0, 24) }}…</code>
-          <Button size="sm" variant="outline" @click="copy(identity.host_id_hex)">
-            <Copy class="h-3 w-3" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-
+  <div class="space-y-3">
     <!-- Active linked session -->
-    <div v-if="linkActive && status.kind === 'linked'" class="space-y-4">
+    <div v-if="linkActive && status.kind === 'linked'" class="space-y-3">
       <Card>
-        <CardHeader>
+        <CardHeader class="pb-2">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <CheckCircle2 class="h-5 w-5 text-green-500" />
-              <CardTitle>
+              <CheckCircle2 class="h-3.5 w-3.5 text-green-500" />
+              <CardTitle class="text-sm">
                 {{
                   link.role === 'sender'
                     ? t('session.success.titleSender')
@@ -311,7 +331,7 @@ onBeforeUnmount(() => {
                 }}
               </CardTitle>
             </div>
-            <Button size="sm" variant="outline" @click="stopSession">
+            <Button size="sm" variant="outline" class="h-7 text-xs" @click="stopSession">
               {{
                 link.role === 'sender'
                   ? t('session.success.leave')
@@ -319,67 +339,47 @@ onBeforeUnmount(() => {
               }}
             </Button>
           </div>
-          <CardDescription>
-            <span class="text-muted-foreground">{{ t('session.metrics.peer') }}</span>
-            <span class="ml-2">{{ link.peer || '—' }}</span>
-          </CardDescription>
         </CardHeader>
-        <CardContent class="grid grid-cols-2 gap-3">
-          <Card>
-            <CardHeader class="pb-2">
-              <CardDescription class="text-xs">{{ t('session.metrics.latencyP50') }}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div class="text-2xl font-bold tabular-nums">
-                {{ p50ms }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader class="pb-2">
-              <CardDescription class="text-xs">{{ t('session.metrics.latencyP99') }}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div class="text-2xl font-bold tabular-nums">
-                {{ p99ms }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader class="pb-2">
-              <CardDescription class="text-xs">{{ t('session.metrics.eventsPerSec') }}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div class="text-2xl font-bold tabular-nums">{{ link.eps }}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader class="pb-2">
-              <CardDescription class="text-xs">{{ t('session.metrics.clockOffset') }}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div class="text-2xl font-bold tabular-nums">
-                {{ offsetMs }} <span class="text-sm text-muted-foreground">{{ t('session.metrics.ms') }}</span>
-              </div>
-            </CardContent>
-          </Card>
+        <CardContent class="space-y-2">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-muted-foreground">{{ t('session.metrics.peer') }}</span>
+            <code class="text-[10px] bg-muted px-1 py-0.5 rounded">{{ link.peer || '—' }}</code>
+          </div>
+          <div class="grid grid-cols-4 gap-2 text-center">
+            <div class="space-y-0.5">
+              <div class="text-[10px] text-muted-foreground">{{ t('session.metrics.latencyP50') }}</div>
+              <div class="text-base font-semibold tabular-nums">{{ p50ms }}</div>
+            </div>
+            <div class="space-y-0.5">
+              <div class="text-[10px] text-muted-foreground">{{ t('session.metrics.latencyP99') }}</div>
+              <div class="text-base font-semibold tabular-nums">{{ p99ms }}</div>
+            </div>
+            <div class="space-y-0.5">
+              <div class="text-[10px] text-muted-foreground">{{ t('session.metrics.eventsPerSec') }}</div>
+              <div class="text-base font-semibold tabular-nums">{{ link.eps }}</div>
+            </div>
+            <div class="space-y-0.5">
+              <div class="text-[10px] text-muted-foreground">{{ t('session.metrics.clockOffset') }}</div>
+              <div class="text-base font-semibold tabular-nums">{{ offsetMs }}</div>
+            </div>
+          </div>
         </CardContent>
       </Card>
-      <p class="text-xs text-muted-foreground">
+      <p class="text-[10px] text-muted-foreground px-1">
         {{ t('session.metrics.killSwitch') }}
-        <kbd class="px-1 bg-muted rounded">Ctrl + ⌘ + ⇧ + Esc</kbd> (mac) /
-        <kbd class="px-1 bg-muted rounded">Ctrl + Win + ⇧ + Esc</kbd> (Win)
+        <kbd class="px-1 bg-muted rounded text-[9px]">Ctrl+⌘+⇧+Esc</kbd> (mac) /
+        <kbd class="px-1 bg-muted rounded text-[9px]">Ctrl+Win+⇧+Esc</kbd> (Win)
       </p>
     </div>
 
     <!-- Hosting -->
     <Card v-else-if="status.kind === 'hosting'">
-      <CardHeader>
-        <CardTitle>{{ t('session.hosting.title') }}</CardTitle>
+      <CardHeader class="pb-2">
+        <CardTitle class="text-sm">{{ t('session.hosting.title') }}</CardTitle>
       </CardHeader>
-      <CardContent class="space-y-4">
+      <CardContent class="space-y-2">
         <div class="border rounded-lg overflow-hidden">
-          <div class="text-4xl font-light tabular-nums tracking-[0.25em] text-center py-8">
+          <div class="text-2xl font-light tabular-nums tracking-[0.2em] text-center py-4">
             {{ formattedCode(status.code) }}
           </div>
           <div v-if="codeRemaining !== null" class="h-1 bg-muted">
@@ -389,15 +389,15 @@ onBeforeUnmount(() => {
             />
           </div>
         </div>
-        <CardDescription>
+        <p class="text-[10px] text-muted-foreground">
           {{ t('session.hosting.hint') }}
           <span v-if="codeRemaining !== null">
             {{ t('session.hosting.refreshIn') }}
             <span class="font-mono">{{ codeRemainingLabel }}</span>.
           </span>
           <span v-else>{{ t('session.hosting.neverExpires') }}</span>
-        </CardDescription>
-        <Button variant="outline" @click="stopSession">
+        </p>
+        <Button size="sm" variant="outline" class="w-full h-7 text-xs" @click="stopSession">
           {{ t('session.hosting.stop') }}
         </Button>
       </CardContent>
@@ -405,25 +405,26 @@ onBeforeUnmount(() => {
 
     <!-- Joining -->
     <Card v-else-if="status.kind === 'joining'">
-      <CardHeader>
-        <CardTitle>{{ t('session.joining.title', { peer: status.peerLabel }) }}</CardTitle>
+      <CardHeader class="pb-2">
+        <CardTitle class="text-sm">{{ t('session.joining.title', { peer: status.peerLabel }) }}</CardTitle>
       </CardHeader>
-      <CardContent class="space-y-4">
+      <CardContent class="space-y-2">
         <Input
           v-model="joinCode"
-          class="text-2xl tabular-nums tracking-widest text-center h-16"
+          class="text-lg tabular-nums tracking-widest text-center h-12"
           :placeholder="t('session.joining.placeholder')"
           autofocus
         />
         <div class="flex gap-2">
           <Button
-            class="flex-1"
+            class="flex-1 h-7 text-xs"
+            size="sm"
             :disabled="joinCode.replace(/\s+/g, '').length < 6"
             @click="submitJoin"
           >
             {{ t('session.joining.submit') }}
           </Button>
-          <Button variant="outline" @click="status = { kind: 'idle' }">
+          <Button size="sm" variant="outline" class="h-7 text-xs" @click="status = { kind: 'idle' }">
             {{ t('session.joining.cancel') }}
           </Button>
         </div>
@@ -442,158 +443,172 @@ onBeforeUnmount(() => {
       </AlertDescription>
     </Alert>
 
-    <!-- Idle: setup OR join -->
-    <div v-else class="space-y-4">
-      <!-- Setup form -->
-      <Card>
-        <CardHeader>
-          <CardTitle>{{ t('session.setup.title') }}</CardTitle>
-          <CardDescription>{{ t('session.setup.description') }}</CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="flex items-center space-x-2">
-            <Checkbox
-              id="custom-code"
-              v-model:checked="useCustomCode"
-            />
-            <Label for="custom-code" class="cursor-pointer">{{ t('session.setup.customCode') }}</Label>
-          </div>
-          <div v-if="useCustomCode" class="space-y-2">
-            <Input
-              v-model="customCode"
-              :placeholder="t('session.setup.codePlaceholder')"
-              @blur="validateCustomCode"
-            />
-            <p v-if="customCodeError" class="text-sm text-destructive">
-              {{ customCodeError }}
-            </p>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <Label class="text-xs">{{ t('session.setup.refresh') }}</Label>
-            <Select v-model="ttlChoice" :disabled="useCustomCode">
-              <SelectTrigger class="w-[180px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5">{{ t('session.setup.ttlEvery', { value: '5 min' }) }}</SelectItem>
-                <SelectItem value="30">{{ t('session.setup.ttlEvery', { value: '30 min' }) }}</SelectItem>
-                <SelectItem value="60">{{ t('session.setup.ttlEvery', { value: '1 h' }) }}</SelectItem>
-                <SelectItem value="never">{{ t('session.setup.ttlNever') }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <span v-if="useCustomCode" class="text-xs text-muted-foreground">
-              {{ t('session.setup.ttlNote') }}
-            </span>
-          </div>
-
-          <details
-            class="border rounded-lg"
-            :open="advancedOpen"
-            @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
-          >
-            <summary class="px-4 py-3 cursor-pointer hover:bg-muted/50">
-              {{ t('session.setup.advanced') }}
-            </summary>
-            <div class="px-4 pb-4 space-y-3">
-              <div class="space-y-2">
-                <Label>{{ t('session.setup.listenAddr') }}</Label>
-                <Input v-model="listenAddr" placeholder="0.0.0.0:7878" />
-              </div>
-              <div class="flex items-center space-x-2">
-                <Checkbox
-                  id="inject"
-                  v-model:checked="enableInject"
-                />
-                <Label for="inject" class="cursor-pointer">{{ t('session.setup.injectEvents') }}</Label>
-              </div>
+    <!-- Idle: horizontal two-column layout -->
+    <div v-else class="grid grid-cols-2 gap-3">
+      <!-- Left column: Setup & Join -->
+      <div class="space-y-3">
+        <!-- Setup form -->
+        <Card>
+          <CardHeader class="pb-2">
+            <CardTitle class="text-sm">{{ t('session.setup.title') }}</CardTitle>
+          </CardHeader>
+          <CardContent class="space-y-2">
+            <div class="flex items-center space-x-2">
+              <Checkbox
+                id="custom-code"
+                v-model:checked="useCustomCode"
+              />
+              <Label for="custom-code" class="cursor-pointer text-xs">{{ t('session.setup.customCode') }}</Label>
             </div>
-          </details>
+            <div v-if="useCustomCode" class="space-y-1">
+              <Input
+                v-model="customCode"
+                :placeholder="t('session.setup.codePlaceholder')"
+                class="h-8 text-xs"
+                @blur="validateCustomCode"
+              />
+              <p v-if="customCodeError" class="text-[10px] text-destructive">
+                {{ customCodeError }}
+              </p>
+            </div>
 
-          <Button class="w-full" @click="setupSession">
-            {{ t('session.setup.start') }}
-          </Button>
-        </CardContent>
-      </Card>
+            <div class="flex items-center gap-2">
+              <Label class="text-[10px]">{{ t('session.setup.refresh') }}</Label>
+              <Select v-model="ttlChoice" :disabled="useCustomCode">
+                <SelectTrigger class="w-[140px] h-7 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">{{ t('session.setup.ttlEvery', { value: '5 min' }) }}</SelectItem>
+                  <SelectItem value="30">{{ t('session.setup.ttlEvery', { value: '30 min' }) }}</SelectItem>
+                  <SelectItem value="60">{{ t('session.setup.ttlEvery', { value: '1 h' }) }}</SelectItem>
+                  <SelectItem value="never">{{ t('session.setup.ttlNever') }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-      <!-- Discovered sessions -->
-      <Card>
-        <CardHeader>
-          <div class="flex items-center justify-between">
-            <CardTitle>{{ t('session.discover.title') }}</CardTitle>
-            <Badge v-if="visiblePeers.length" variant="secondary">
-              {{ t('session.discover.foundCount', { count: visiblePeers.length }) }}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent class="space-y-3">
-          <div v-if="visiblePeers.length" class="space-y-2">
-            <Card
-              v-for="peer in visiblePeers"
-              :key="peer.instance_name"
-              class="hover:bg-muted/50 transition-colors"
+            <details
+              class="border rounded-lg"
+              :open="advancedOpen"
+              @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
             >
-              <CardContent class="flex items-center justify-between p-4">
+              <summary class="px-2 py-1.5 cursor-pointer hover:bg-muted/50 text-xs">
+                {{ t('session.setup.advanced') }}
+              </summary>
+              <div class="px-2 pb-2 space-y-2">
+                <div class="space-y-1">
+                  <Label class="text-[10px]">{{ t('session.setup.listenAddr') }}</Label>
+                  <Input v-model="listenAddr" placeholder="0.0.0.0:7878" class="h-7 text-xs" />
+                </div>
+                <div class="flex items-center space-x-2">
+                  <Checkbox
+                    id="inject"
+                    v-model:checked="enableInject"
+                  />
+                  <Label for="inject" class="cursor-pointer text-xs">{{ t('session.setup.injectEvents') }}</Label>
+                </div>
+              </div>
+            </details>
+
+            <Button class="w-full h-7 text-xs" size="sm" @click="setupSession">
+              {{ t('session.setup.start') }}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <!-- Discovered sessions -->
+        <Card>
+          <CardHeader class="pb-2">
+            <div class="flex items-center justify-between">
+              <CardTitle class="text-sm">{{ t('session.discover.title') }}</CardTitle>
+              <Badge v-if="visiblePeers.length" variant="secondary" class="text-[10px] h-4">
+                {{ visiblePeers.length }}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent class="space-y-2">
+            <div v-if="visiblePeers.length" class="space-y-1.5">
+              <div
+                v-for="peer in visiblePeers"
+                :key="peer.instance_name"
+                class="flex items-center justify-between p-1.5 rounded-lg border hover:bg-muted/50 transition-colors"
+              >
                 <div class="min-w-0 flex-1">
-                  <div class="font-medium">{{ peer.instance_name }}</div>
-                  <div class="text-xs text-muted-foreground font-mono truncate">
+                  <div class="text-xs font-medium">{{ peer.instance_name }}</div>
+                  <div class="text-[10px] text-muted-foreground font-mono truncate">
                     {{
                       formatPeerAddr(
                         pickPeerIp(peer.addrs) ?? peer.addrs[0] ?? '?',
                         peer.data_port || peer.port,
                       )
                     }}
-                    · fp {{ peer.fingerprint_hex.slice(0, 12) }}…
                   </div>
                 </div>
-                <Button size="sm" @click="pickPeer(peer)">
+                <Button size="sm" class="h-6 text-[10px]" @click="pickPeer(peer)">
                   {{ t('session.discover.join') }}
                 </Button>
-              </CardContent>
-            </Card>
-          </div>
-          <p v-else class="text-sm text-muted-foreground">
-            {{ t('session.discover.scanning') }}
-          </p>
-          <details class="border rounded-lg">
-            <summary class="px-4 py-3 cursor-pointer hover:bg-muted/50">
-              {{ t('session.discover.manualToggle') }}
-            </summary>
-            <div class="px-4 pb-4 space-y-3">
-              <Input
-                v-model="manualPeer"
-                :placeholder="t('session.discover.manualPlaceholder')"
-              />
-              <Button
-                class="w-full"
-                :disabled="!manualPeer.trim()"
-                @click="pickManual"
-              >
-                {{ t('session.discover.continue') }}
+              </div>
+            </div>
+            <p v-else class="text-[10px] text-muted-foreground text-center py-2">
+              {{ t('session.discover.scanning') }}
+            </p>
+            <details class="border rounded-lg">
+              <summary class="px-2 py-1.5 cursor-pointer hover:bg-muted/50 text-xs">
+                {{ t('session.discover.manualToggle') }}
+              </summary>
+              <div class="px-2 pb-2 pt-1 space-y-1.5">
+                <Input
+                  v-model="manualPeer"
+                  :placeholder="t('session.discover.manualPlaceholder')"
+                  class="text-xs h-7"
+                />
+                <Button
+                  size="sm"
+                  class="w-full h-6 text-[10px]"
+                  :disabled="!manualPeer.trim()"
+                  @click="pickManual"
+                >
+                  {{ t('session.discover.continue') }}
+                </Button>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+      </div>
+
+      <!-- Right column: Identity & Paired peers -->
+      <div class="space-y-3">
+        <Card v-if="identity">
+          <CardHeader class="pb-2">
+            <CardTitle class="text-sm">{{ t('identity.label') }}</CardTitle>
+          </CardHeader>
+          <CardContent class="space-y-2">
+            <div class="text-xs">{{ identity.instance_name }}</div>
+            <div class="flex items-center gap-2">
+              <code class="text-[10px] text-muted-foreground flex-1 truncate">{{ identity.host_id_hex }}</code>
+              <Button size="sm" variant="ghost" class="h-6 w-6 p-0" @click="copy(identity.host_id_hex)">
+                <Copy class="h-3 w-3" />
               </Button>
             </div>
-          </details>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <!-- Paired peers -->
-      <Card v-if="pairing.paired.length">
-        <CardHeader>
-          <CardTitle class="text-sm">{{ t('session.paired.title') }}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul class="space-y-2">
-            <li
+        <Card v-if="pairing.paired.length">
+          <CardHeader class="pb-2">
+            <CardTitle class="text-sm">{{ t('session.paired.title') }}</CardTitle>
+          </CardHeader>
+          <CardContent class="space-y-1">
+            <div
               v-for="p in pairing.paired"
               :key="p.host_id_hex"
-              class="flex items-center justify-between text-sm"
+              class="flex items-center justify-between text-xs py-1"
             >
               <span class="truncate">{{ p.instance_name }}</span>
-              <code class="text-xs text-muted-foreground">{{ p.host_id_hex.slice(0, 10) }}…</code>
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
+              <code class="text-[10px] text-muted-foreground">{{ p.host_id_hex.slice(0, 8) }}…</code>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   </div>
 </template>
