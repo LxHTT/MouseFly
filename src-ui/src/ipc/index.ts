@@ -221,3 +221,11 @@ export interface LayoutEvent {
 export function listenLayout(cb: (e: LayoutEvent) => void): Promise<UnlistenFn> {
   return listen<LayoutEvent>('layout', (e) => cb(e.payload))
 }
+
+export function listenLayoutEditLock(cb: (editing: boolean) => void): Promise<UnlistenFn> {
+  return listen<boolean>('layout-edit-lock', (e) => cb(e.payload))
+}
+
+export async function notifyLayoutEditing(editing: boolean): Promise<void> {
+  await invoke('notify_layout_editing', { editing })
+}

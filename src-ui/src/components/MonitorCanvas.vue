@@ -8,24 +8,36 @@ import {
   type HostLayout,
   type HostSide,
 } from '../stores/layout'
+import { listenLayoutEditLock, notifyLayoutEditing } from '../ipc'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 
 const layout = useLayoutStore()
 const { t } = useI18n()
 
 const isDark = ref(false)
+const remoteIsEditing = ref(false)
+let unlistenEditLock: UnlistenFn | null = null
 
 function updateTheme() {
   isDark.value = document.documentElement.classList.contains('dark')
 }
 
-onMounted(() => {
+onMounted(async () => {
   updateTheme()
   const observer = new MutationObserver(updateTheme)
   observer.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['class'],
   })
-  onBeforeUnmount(() => observer.disconnect())
+
+  unlistenEditLock = await listenLayoutEditLock((editing) => {
+    remoteIsEditing.value = editing
+  })
+
+  onBeforeUnmount(() => {
+    observer.disconnect()
+    unlistenEditLock?.()
+  })
 })
 
 const SNAP_DIST = 24
@@ -193,6 +205,8 @@ function onPointerDownHost(e: PointerEvent, side: HostSide) {
     pointerId: e.pointerId,
   }
   ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  // Notify peer that we're editing the layout
+  notifyLayoutEditing(true).catch(() => {})
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -219,6 +233,10 @@ function onPointerUp(e: PointerEvent) {
   const d = drag.value
   if (!d) return
   ;(e.currentTarget as Element).releasePointerCapture?.(d.pointerId)
+  // Notify peer that we've stopped editing the layout
+  if (d.kind === 'host') {
+    notifyLayoutEditing(false).catch(() => {})
+  }
   drag.value = null
   layout.pushOffsetsToRust()
 }
@@ -510,6 +528,21 @@ defineExpose({ resetView })
         />
       </g>
     </svg>
+
+    <!-- Remote editing overlay -->
+    <div
+      v-if="remoteIsEditing"
+      class="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center pointer-events-none"
+    >
+      <div class="bg-zinc-900 border border-zinc-700 rounded-lg px-6 py-4 text-center">
+        <div class="text-lg font-semibold text-zinc-100 mb-1">
+          {{ t('layout.remoteEditing') }}
+        </div>
+        <div class="text-sm text-zinc-400">
+          {{ t('layout.remoteEditingDesc') }}
+        </div>
+      </div>
+    </div>
 
     <div
       class="absolute top-2 right-2 flex gap-1 text-[10px] uppercase tracking-widest"

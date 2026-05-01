@@ -104,6 +104,8 @@ export default {
     primaryBadge: 'PRI',
     thisHost: 'This host',
     remote: 'Remote',
+    remoteEditing: 'Remote is editing layout',
+    remoteEditingDesc: 'Please wait while the remote host arranges monitors',
   },
   log: {
     clear: 'Clear',

@@ -104,6 +104,8 @@ export default {
     primaryBadge: '主畫面',
     thisHost: '本機',
     remote: '對端',
+    remoteEditing: '對端正在編輯佈局',
+    remoteEditingDesc: '請稍候，對端正在排列顯示器',
   },
   log: {
     clear: '清除',

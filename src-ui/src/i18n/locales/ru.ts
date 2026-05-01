@@ -104,6 +104,8 @@ export default {
     primaryBadge: 'ОСН',
     thisHost: 'Этот хост',
     remote: 'Удалённый',
+    remoteEditing: 'Удалённый хост редактирует раскладку',
+    remoteEditingDesc: 'Пожалуйста, подождите, пока удалённый хост размещает мониторы',
   },
   log: {
     clear: 'Очистить',

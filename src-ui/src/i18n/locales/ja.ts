@@ -104,6 +104,8 @@ export default {
     primaryBadge: 'メイン',
     thisHost: 'このホスト',
     remote: 'リモート',
+    remoteEditing: 'リモートがレイアウトを編集中',
+    remoteEditingDesc: 'リモートホストがモニターを配置中です。お待ちください',
   },
   log: {
     clear: 'クリア',
