@@ -6,5 +6,13 @@
 	<string>MouseFly needs Accessibility permission to capture keyboard and mouse events from your Mac and forward them to other computers.</string>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>MouseFly needs Input Monitoring permission to capture keyboard and mouse events from your Mac and forward them to other computers.</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<key>LSBackgroundOnly</key>
+	<false/>
+	<key>NSAppSleepDisabled</key>
+	<true/>
 </dict>
 </plist>
