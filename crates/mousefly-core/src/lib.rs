@@ -104,4 +104,10 @@ pub enum Frame {
     /// Notifies peers that this host is exiting the session. Sent on graceful
     /// shutdown so peers can update their UI and clean up state.
     SessionExit,
+    /// Notifies peer that this host is editing the layout. Peer should show a
+    /// disabled overlay to prevent simultaneous editing conflicts.
+    LayoutEditLock { editing: bool },
+    /// Notifies peer about remote control state. When `controlling` is true,
+    /// the peer should hide its cursor and suppress local input injection.
+    RemoteControlState { controlling: bool },
 }
