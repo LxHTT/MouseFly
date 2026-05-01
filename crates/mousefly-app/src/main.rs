@@ -695,6 +695,7 @@ async fn run_sender(
                 let mut cap_rx = cap_tx.subscribe();
                 let layout_for_pump = layout.clone();
                 let app_for_pump = app.clone();
+                let backend_for_pump = Platform::new();
                 let pump = tokio::spawn(async move {
                     let mut last_cursor = (0f32, 0f32);
                     let mut edge = layout::EdgeState::default();
@@ -727,6 +728,12 @@ async fn run_sender(
                                         "Cursor returned to this computer"
                                     };
                                     emit_log(&app_for_pump, "info", msg);
+                                    // Hide cursor when on remote, show when back on local.
+                                    if let Err(e) =
+                                        backend_for_pump.set_cursor_visible(!edge.on_remote)
+                                    {
+                                        warn!("set_cursor_visible failed: {e:#}");
+                                    }
                                 }
                                 if let Some(frame) = gated {
                                     if outbound.send(frame).await.is_err() {

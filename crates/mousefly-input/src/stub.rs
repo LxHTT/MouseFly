@@ -34,4 +34,8 @@ impl InputBackend for StubBackend {
     fn inject(&self, _frame: &Frame) -> Result<()> {
         bail!("input injection is not yet implemented on this OS")
     }
+
+    fn set_cursor_visible(&self, _visible: bool) -> Result<()> {
+        bail!("cursor visibility control is not yet implemented on this OS")
+    }
 }

@@ -51,7 +51,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, GetSystemMetrics, SetWindowsHookExW,
+    CallNextHookEx, DispatchMessageW, GetMessageW, GetSystemMetrics, SetWindowsHookExW, ShowCursor,
     TranslateMessage, HC_ACTION, KBDLLHOOKSTRUCT, MONITORINFOF_PRIMARY, MSG, MSLLHOOKSTRUCT,
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WHEEL_DELTA,
     WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
@@ -277,6 +277,23 @@ impl InputBackend for WinBackend {
             | Frame::LayoutUpdate { .. }
             | Frame::Clipboard { .. }
             | Frame::SessionExit => {}
+        }
+        Ok(())
+    }
+
+    fn set_cursor_visible(&self, visible: bool) -> Result<()> {
+        // SAFETY: ShowCursor is safe to call from any thread. It increments or
+        // decrements a display counter; when the counter is < 0, the cursor is
+        // hidden. Multiple calls may be needed to fully show/hide if other code
+        // has also called ShowCursor.
+        unsafe {
+            if visible {
+                // Increment the display counter until cursor is visible.
+                while ShowCursor(true) < 0 {}
+            } else {
+                // Decrement the display counter until cursor is hidden.
+                while ShowCursor(false) >= 0 {}
+            }
         }
         Ok(())
     }

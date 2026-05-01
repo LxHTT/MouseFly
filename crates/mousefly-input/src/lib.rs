@@ -42,6 +42,10 @@ pub trait InputBackend: Send + Sync {
     /// Apply an inbound frame to the local OS state. Non-input frames are
     /// silently ignored.
     fn inject(&self, frame: &Frame) -> Result<()>;
+
+    /// Show or hide the system cursor. Called by the sender when the virtual
+    /// cursor crosses onto or off the remote host.
+    fn set_cursor_visible(&self, visible: bool) -> Result<()>;
 }
 
 /// Install the kill-switch tap on the current OS:

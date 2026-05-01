@@ -186,6 +186,19 @@ impl InputBackend for MacBackend {
         }
         Ok(())
     }
+
+    fn set_cursor_visible(&self, visible: bool) -> Result<()> {
+        // SAFETY: CGDisplayHideCursor/ShowCursor are safe to call from any
+        // thread. They affect the global cursor state for the main display.
+        unsafe {
+            if visible {
+                CGDisplayShowCursor(CGMainDisplayID());
+            } else {
+                CGDisplayHideCursor(CGMainDisplayID());
+            }
+        }
+        Ok(())
+    }
 }
 
 // macOS: Use CombinedSessionState (equivalent to NULL in C API) for default
@@ -500,3 +513,11 @@ extern "C" {
 }
 
 const K_IOHIDREQUEST_TYPE_LISTEN_EVENT: u32 = 0;
+
+// Cursor visibility control. CGDisplayHideCursor/ShowCursor are part of
+// CoreGraphics and affect the global cursor state.
+extern "C" {
+    fn CGDisplayHideCursor(display: u32) -> i32;
+    fn CGDisplayShowCursor(display: u32) -> i32;
+    fn CGMainDisplayID() -> u32;
+}
