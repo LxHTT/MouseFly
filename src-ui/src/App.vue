@@ -32,7 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { AlertCircle, X } from 'lucide-vue-next'
 
-const isDark = useDark()
+useDark()
 
 type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
