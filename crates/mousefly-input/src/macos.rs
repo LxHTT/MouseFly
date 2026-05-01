@@ -182,7 +182,9 @@ impl InputBackend for MacBackend {
             | Frame::RttReply { .. }
             | Frame::LayoutUpdate { .. }
             | Frame::Clipboard { .. }
-            | Frame::SessionExit => {}
+            | Frame::SessionExit
+            | Frame::LayoutEditLock { .. }
+            | Frame::RemoteControlState { .. } => {}
         }
         Ok(())
     }

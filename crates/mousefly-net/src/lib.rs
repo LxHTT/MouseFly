@@ -535,7 +535,9 @@ fn transport_class(frame: &Frame) -> Class {
         | Frame::RttProbe { .. }
         | Frame::RttReply { .. }
         | Frame::Clipboard { .. }
-        | Frame::SessionExit => Class::Control,
+        | Frame::SessionExit
+        | Frame::LayoutEditLock { .. }
+        | Frame::RemoteControlState { .. } => Class::Control,
     }
 }
 

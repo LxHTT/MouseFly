@@ -72,6 +72,19 @@ struct LinkRuntime {
     shutdown_tx: AsyncMutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
+/// Broadcast channel for layout editing state. Frontend calls notify_layout_editing,
+/// which sends on this channel; link tasks subscribe and forward as LayoutEditLock frames.
+struct LayoutEditBroadcast {
+    tx: tokio::sync::broadcast::Sender<bool>,
+}
+
+impl Default for LayoutEditBroadcast {
+    fn default() -> Self {
+        let (tx, _) = tokio::sync::broadcast::channel(16);
+        Self { tx }
+    }
+}
+
 #[tauri::command]
 async fn start_link(
     app: AppHandle,
@@ -258,6 +271,7 @@ fn main() -> Result<()> {
 
     let global_layout = layout::make_shared();
     let link_runtime = Arc::new(LinkRuntime::default());
+    let layout_edit_broadcast = Arc::new(LayoutEditBroadcast::default());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
@@ -266,6 +280,7 @@ fn main() -> Result<()> {
         ))
         .manage(global_layout.clone())
         .manage(link_runtime.clone())
+        .manage(layout_edit_broadcast.clone())
         .invoke_handler(tauri::generate_handler![
             pairing::start_pair_responder,
             pairing::start_pair_initiator,
@@ -280,6 +295,7 @@ fn main() -> Result<()> {
             check_permissions,
             request_permissions,
             layout::update_layout,
+            layout::notify_layout_editing,
             start_link,
             stop_link,
             current_role,
@@ -648,6 +664,9 @@ async fn run_sender(
 
     let clipboard_mark = clipboard::make_watermark();
 
+    // Get layout edit broadcast for subscribing in the loop
+    let layout_edit_broadcast: tauri::State<Arc<LayoutEditBroadcast>> = app.state();
+
     // Capture is started exactly once and feeds a tokio broadcast channel so
     // we can transparently re-attach to a fresh Link on each reconnect attempt.
     emit_status(
@@ -691,11 +710,28 @@ async fn run_sender(
                 spawn_health_emitter(app.clone(), link.health.clone(), "sender");
                 clipboard::spawn_poller(link.outbound.clone(), clipboard_mark.clone());
 
+                // Forward layout editing state to peer
+                let outbound_for_edit = link.outbound.clone();
+                let mut layout_edit_rx = layout_edit_broadcast.tx.subscribe();
+                let edit_forward = tokio::spawn(async move {
+                    while let Ok(editing) = layout_edit_rx.recv().await {
+                        if outbound_for_edit
+                            .send(Frame::LayoutEditLock { editing })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+
                 let outbound = link.outbound.clone();
                 let mut cap_rx = cap_tx.subscribe();
                 let layout_for_pump = layout.clone();
                 let app_for_pump = app.clone();
                 let backend_for_pump = Platform::new();
+                let remote_controlling = Arc::new(AtomicBool::new(false));
+                let remote_controlling_for_pump = remote_controlling.clone();
                 let pump = tokio::spawn(async move {
                     let mut last_cursor = (0f32, 0f32);
                     let mut edge = layout::EdgeState::default();
@@ -703,6 +739,17 @@ async fn run_sender(
                     loop {
                         match cap_rx.recv().await {
                             Ok(frame) => {
+                                // Don't send local events if remote is controlling us
+                                if remote_controlling_for_pump.load(Ordering::Relaxed)
+                                    && !matches!(
+                                        frame,
+                                        Frame::Heartbeat
+                                            | Frame::RttProbe { .. }
+                                            | Frame::RttReply { .. }
+                                    )
+                                {
+                                    continue;
+                                }
                                 if LOCK_ENGAGED.load(Ordering::Relaxed)
                                     && !matches!(
                                         frame,
@@ -734,6 +781,12 @@ async fn run_sender(
                                     {
                                         warn!("set_cursor_visible failed: {e:#}");
                                     }
+                                    // Notify peer about our control state
+                                    let _ = outbound
+                                        .send(Frame::RemoteControlState {
+                                            controlling: edge.on_remote,
+                                        })
+                                        .await;
                                 }
                                 if let Some(frame) = gated {
                                     if outbound.send(frame).await.is_err() {
@@ -754,6 +807,7 @@ async fn run_sender(
                                 info!("sender: shutdown signal received, sending SessionExit");
                                 let _ = link.outbound.send(Frame::SessionExit).await;
                                 pump.abort();
+                                edit_forward.abort();
                                 emit_status(&app, "info", "Session ended");
                                 return Ok(());
                             }
@@ -781,6 +835,42 @@ async fn run_sender(
                                         Frame::Clipboard { text } => {
                                             clipboard::apply(text, &clipboard_mark).await;
                                         }
+                                        Frame::RemoteControlState { controlling } => {
+                                            remote_controlling.store(controlling, Ordering::Relaxed);
+                                            if let Err(e) = backend.set_cursor_visible(!controlling) {
+                                                warn!("set_cursor_visible failed: {e:#}");
+                                            }
+                                            emit_log(
+                                                &app,
+                                                "info",
+                                                if controlling {
+                                                    "Remote is controlling this computer"
+                                                } else {
+                                                    "Remote released control"
+                                                },
+                                            );
+                                        }
+                                        Frame::LayoutEditLock { editing } => {
+                                            let _ = app.emit("layout-edit-lock", &editing);
+                                        }
+                                        Frame::PointerOnMonitor {
+                                            monitor: _,
+                                            mm_x: _,
+                                            mm_y: _,
+                                            ..
+                                        } if !remote_controlling.load(Ordering::Relaxed) => {
+                                            let resolved = {
+                                                let g = layout.read().await;
+                                                g.pointer_on_monitor_to_local(&inbound.frame)
+                                            };
+                                            if let Some(frame) = resolved {
+                                                if let Err(e) = backend.inject(&frame) {
+                                                    warn!("inject (mapped) failed: {e:#}");
+                                                }
+                                            } else {
+                                                warn!("PointerOnMonitor: no matching local monitor");
+                                            }
+                                        }
                                         Frame::SessionExit => {
                                             info!("sender: received SessionExit from peer");
                                             pump.abort();
@@ -788,11 +878,17 @@ async fn run_sender(
                                             let _ = app.emit("link-dropped", &());
                                             break;
                                         }
-                                        other => debug!(?other, "sender saw inbound frame (ignored)"),
+                                        ref f if !remote_controlling.load(Ordering::Relaxed) => {
+                                            if let Err(e) = backend.inject(f) {
+                                                debug!("inject failed: {e:#}");
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
                                 None => {
                                     pump.abort();
+                                    edit_forward.abort();
                                     emit_status(&app, "warn", "Connection lost — reconnecting…");
                                     let _ = app.emit("link-dropped", &());
                                     break;
@@ -831,6 +927,30 @@ async fn run_receiver(
 
     let clipboard_mark = clipboard::make_watermark();
 
+    // Get layout edit broadcast for subscribing in the loop
+    let layout_edit_broadcast: tauri::State<Arc<LayoutEditBroadcast>> = app.state();
+
+    // Start capture for bidirectional control
+    emit_status(
+        &app,
+        "info",
+        "Starting input capture (you may see a permission prompt)",
+    );
+    let capture = match backend.start_capture() {
+        Ok(c) => c,
+        Err(e) => {
+            emit_status(&app, "error", format!("Capture failed: {e:#}"));
+            return Err(e);
+        }
+    };
+    let (cap_tx, _cap_rx0) = tokio::sync::broadcast::channel::<Frame>(1024);
+    let cap_tx_for_pump = cap_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        while let Ok(frame) = capture.recv() {
+            let _ = cap_tx_for_pump.send(frame);
+        }
+    });
+
     loop {
         info!("waiting for sender on {addr}");
         emit_status(&app, "info", format!("Waiting for connection on {addr}…"));
@@ -856,12 +976,104 @@ async fn run_receiver(
                 spawn_health_emitter(app.clone(), link.health.clone(), "receiver");
                 clipboard::spawn_poller(link.outbound.clone(), clipboard_mark.clone());
 
+                // Forward layout editing state to peer
+                let outbound_for_edit = link.outbound.clone();
+                let mut layout_edit_rx = layout_edit_broadcast.tx.subscribe();
+                let edit_forward = tokio::spawn(async move {
+                    while let Ok(editing) = layout_edit_rx.recv().await {
+                        if outbound_for_edit
+                            .send(Frame::LayoutEditLock { editing })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+
+                // Bidirectional control: receiver also sends captured events
+                let outbound = link.outbound.clone();
+                let mut cap_rx = cap_tx.subscribe();
+                let layout_for_pump = layout.clone();
+                let app_for_pump = app.clone();
+                let backend_for_pump = Platform::new();
+                let remote_controlling = Arc::new(AtomicBool::new(false));
+                let remote_controlling_for_pump = remote_controlling.clone();
+                let pump = tokio::spawn(async move {
+                    let mut last_cursor = (0f32, 0f32);
+                    let mut edge = layout::EdgeState::default();
+                    let mut was_on_remote = false;
+                    loop {
+                        match cap_rx.recv().await {
+                            Ok(frame) => {
+                                // Don't send local events if remote is controlling us
+                                if remote_controlling_for_pump.load(Ordering::Relaxed)
+                                    && !matches!(
+                                        frame,
+                                        Frame::Heartbeat
+                                            | Frame::RttProbe { .. }
+                                            | Frame::RttReply { .. }
+                                    )
+                                {
+                                    continue;
+                                }
+                                if LOCK_ENGAGED.load(Ordering::Relaxed)
+                                    && !matches!(
+                                        frame,
+                                        Frame::Heartbeat
+                                            | Frame::RttProbe { .. }
+                                            | Frame::RttReply { .. }
+                                    )
+                                {
+                                    continue;
+                                }
+                                let gated = layout::gate_outbound(
+                                    frame,
+                                    &layout_for_pump,
+                                    &mut last_cursor,
+                                    &mut edge,
+                                )
+                                .await;
+                                if edge.on_remote != was_on_remote {
+                                    was_on_remote = edge.on_remote;
+                                    let msg = if edge.on_remote {
+                                        "Cursor moved to remote computer"
+                                    } else {
+                                        "Cursor returned to this computer"
+                                    };
+                                    emit_log(&app_for_pump, "info", msg);
+                                    if let Err(e) =
+                                        backend_for_pump.set_cursor_visible(!edge.on_remote)
+                                    {
+                                        warn!("set_cursor_visible failed: {e:#}");
+                                    }
+                                    // Notify peer about our control state
+                                    let _ = outbound
+                                        .send(Frame::RemoteControlState {
+                                            controlling: edge.on_remote,
+                                        })
+                                        .await;
+                                }
+                                if let Some(frame) = gated {
+                                    if outbound.send(frame).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                });
+
                 loop {
                     tokio::select! {
                         _ = shutdown_rx.changed() => {
                             if *shutdown_rx.borrow() {
                                 info!("receiver: shutdown signal received, sending SessionExit");
                                 let _ = link.outbound.send(Frame::SessionExit).await;
+                                pump.abort();
+                                edit_forward.abort();
                                 emit_status(&app, "info", "Session ended");
                                 return Ok(());
                             }
@@ -880,12 +1092,30 @@ async fn run_receiver(
                                         Frame::Clipboard { text } => {
                                             clipboard::apply(text, &clipboard_mark).await;
                                         }
+                                        Frame::RemoteControlState { controlling } => {
+                                            remote_controlling.store(controlling, Ordering::Relaxed);
+                                            if let Err(e) = backend.set_cursor_visible(!controlling) {
+                                                warn!("set_cursor_visible failed: {e:#}");
+                                            }
+                                            emit_log(
+                                                &app,
+                                                "info",
+                                                if controlling {
+                                                    "Remote is controlling this computer"
+                                                } else {
+                                                    "Remote released control"
+                                                },
+                                            );
+                                        }
+                                        Frame::LayoutEditLock { editing } => {
+                                            let _ = app.emit("layout-edit-lock", &editing);
+                                        }
                                         Frame::PointerOnMonitor {
                                             monitor,
                                             mm_x,
                                             mm_y,
                                             ..
-                                        } if inject => {
+                                        } if inject && !remote_controlling.load(Ordering::Relaxed) => {
                                             static POM_COUNT: std::sync::atomic::AtomicU32 =
                                                 std::sync::atomic::AtomicU32::new(0);
                                             let c = POM_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -906,11 +1136,13 @@ async fn run_receiver(
                                         }
                                         Frame::SessionExit => {
                                             info!("receiver: received SessionExit from peer");
+                                            pump.abort();
+                                            edit_forward.abort();
                                             emit_status(&app, "info", "Remote host ended session");
                                             let _ = app.emit("link-dropped", &());
                                             break;
                                         }
-                                        ref f if inject => {
+                                        ref f if inject && !remote_controlling.load(Ordering::Relaxed) => {
                                             if let Err(e) = backend.inject(f) {
                                                 warn!("inject failed: {e:#}");
                                             }
@@ -919,6 +1151,8 @@ async fn run_receiver(
                                     }
                                 }
                                 None => {
+                                    pump.abort();
+                                    edit_forward.abort();
                                     emit_status(&app, "warn", "Remote computer disconnected");
                                     let _ = app.emit("link-dropped", &());
                                     break;

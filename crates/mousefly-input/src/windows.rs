@@ -276,7 +276,9 @@ impl InputBackend for WinBackend {
             | Frame::RttReply { .. }
             | Frame::LayoutUpdate { .. }
             | Frame::Clipboard { .. }
-            | Frame::SessionExit => {}
+            | Frame::SessionExit
+            | Frame::LayoutEditLock { .. }
+            | Frame::RemoteControlState { .. } => {}
         }
         Ok(())
     }

@@ -63,6 +63,19 @@ pub async fn update_layout(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn notify_layout_editing(
+    app: AppHandle,
+    editing: bool,
+) -> std::result::Result<(), String> {
+    use crate::LayoutEditBroadcast;
+    use std::sync::Arc;
+
+    let broadcast: tauri::State<Arc<LayoutEditBroadcast>> = app.state();
+    let _ = broadcast.tx.send(editing);
+    Ok(())
+}
+
 impl GlobalLayout {
     /// Update our knowledge of one side's monitor set. Called when:
     /// - the local host enumerates monitors at startup,
