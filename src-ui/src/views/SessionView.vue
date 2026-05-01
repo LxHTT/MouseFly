@@ -44,10 +44,10 @@ let unlistens: UnlistenFn[] = []
 const useCustomCode = ref(false)
 const customCode = ref('')
 const customCodeError = ref('')
-type Ttl = 'never' | 5 | 30 | 60
-const ttlChoice = ref<Ttl>(5)
+type Ttl = 'never' | '5' | '30' | '60'
+const ttlChoice = ref<Ttl>('5')
 const ttlSeconds = computed(() =>
-  ttlChoice.value === 'never' ? null : ttlChoice.value * 60,
+  ttlChoice.value === 'never' ? null : parseInt(ttlChoice.value) * 60,
 )
 const advancedOpen = ref(false)
 const listenAddr = ref('0.0.0.0:7878')
@@ -106,7 +106,19 @@ watch(useCustomCode, (v) => {
 })
 
 watch(() => link.role, async (role, oldRole) => {
-  if (role === 'idle' && (status.value.kind === 'linked' || status.value.kind === 'hosting')) {
+  if (role === 'idle' && status.value.kind === 'linked') {
+    // When disconnecting from an active session, check if we should return to hosting
+    const pairingState = await getPairingState().catch(() => null)
+    if (pairingState) {
+      status.value = {
+        kind: 'hosting',
+        code: pairingState.code,
+        expiresUnix: pairingState.expires_unix,
+      }
+    } else {
+      status.value = { kind: 'idle' }
+    }
+  } else if (role === 'idle' && status.value.kind === 'hosting') {
     status.value = { kind: 'idle' }
   } else if ((role === 'sender' || role === 'receiver') && oldRole === 'idle' && status.value.kind === 'idle') {
     const hasActiveConnection = link.p50us > 0 || link.eps > 0
@@ -124,15 +136,6 @@ watch(() => link.role, async (role, oldRole) => {
     }
   }
 })
-
-watch(
-  () => link.role,
-  (role) => {
-    if (role === 'idle' && status.value.kind === 'linked') {
-      status.value = { kind: 'idle' }
-    }
-  },
-)
 
 function validateCustomCode(): boolean {
   const c = customCode.value.trim()
@@ -189,8 +192,8 @@ function pickPeer(peer: DiscoveredPeer) {
 }
 
 const ttlLabel = computed(() => {
-  if (typeof ttlChoice.value !== 'number') return t('session.setup.ttlNever')
-  const minutes = ttlChoice.value
+  if (ttlChoice.value === 'never') return t('session.setup.ttlNever')
+  const minutes = parseInt(ttlChoice.value)
   return t('session.setup.ttlEvery', {
     value: minutes >= 60 ? '1 h' : `${minutes} min`,
   })
@@ -453,23 +456,25 @@ onBeforeUnmount(() => {
             <CardTitle class="text-sm">{{ t('session.setup.title') }}</CardTitle>
           </CardHeader>
           <CardContent class="space-y-2">
-            <div class="flex items-center space-x-2">
-              <Checkbox
-                id="custom-code"
-                v-model:checked="useCustomCode"
-              />
-              <Label for="custom-code" class="cursor-pointer text-xs">{{ t('session.setup.customCode') }}</Label>
-            </div>
-            <div v-if="useCustomCode" class="space-y-1">
-              <Input
-                v-model="customCode"
-                :placeholder="t('session.setup.codePlaceholder')"
-                class="h-8 text-xs"
-                @blur="validateCustomCode"
-              />
-              <p v-if="customCodeError" class="text-[10px] text-destructive">
-                {{ customCodeError }}
-              </p>
+            <div class="space-y-2 p-2 rounded-md border border-dashed">
+              <div class="flex items-center space-x-2">
+                <Checkbox
+                  id="custom-code"
+                  v-model:checked="useCustomCode"
+                />
+                <Label for="custom-code" class="cursor-pointer text-xs font-medium">{{ t('session.setup.customCode') }}</Label>
+              </div>
+              <div v-if="useCustomCode" class="space-y-1 pl-6">
+                <Input
+                  v-model="customCode"
+                  :placeholder="t('session.setup.codePlaceholder')"
+                  class="h-8 text-xs"
+                  @blur="validateCustomCode"
+                />
+                <p v-if="customCodeError" class="text-[10px] text-destructive">
+                  {{ customCodeError }}
+                </p>
+              </div>
             </div>
 
             <div class="flex items-center gap-2">

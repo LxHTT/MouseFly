@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useDark } from '@vueuse/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useLinkStore } from './stores/link'
@@ -30,6 +31,8 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { AlertCircle, X } from 'lucide-vue-next'
+
+const isDark = useDark()
 
 type Tab = 'session' | 'layout' | 'log'
 const tab = ref<Tab>('session')
