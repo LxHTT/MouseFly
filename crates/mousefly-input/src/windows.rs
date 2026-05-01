@@ -402,11 +402,26 @@ fn mouse_event_to_frame(msg: u32, info: &MSLLHOOKSTRUCT) -> Option<Frame> {
     match msg {
         WM_MOUSEMOVE => {
             let buttons = *CAPTURE_BUTTONS.lock().unwrap();
+            // Windows: MSLLHOOKSTRUCT doesn't expose raw deltas directly. The OS
+            // provides absolute coordinates only. We track the last position and
+            // compute deltas ourselves. This is less accurate than macOS's
+            // EventField::MOUSE_EVENT_DELTA_X/Y (which gives true hardware deltas
+            // even when the cursor is clamped at screen edges), but it's the best
+            // Windows offers via low-level hooks. For edge-crossing to work, we
+            // need *some* delta — zero deltas prevent the virtual cursor from
+            // accumulating movement when pinned at the screen boundary.
+            static LAST_PT: Mutex<Option<POINT>> = Mutex::new(None);
+            let mut last = LAST_PT.lock().unwrap();
+            let (dx, dy) = match *last {
+                Some(prev) => ((pt.x - prev.x) as f32, (pt.y - prev.y) as f32),
+                None => (0.0, 0.0),
+            };
+            *last = Some(pt);
             Some(Frame::PointerAbs {
                 x: pt.x as f32,
                 y: pt.y as f32,
-                dx: 0.0,
-                dy: 0.0,
+                dx,
+                dy,
                 buttons,
             })
         }
